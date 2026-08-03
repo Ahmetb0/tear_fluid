@@ -1,0 +1,1828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tear Film Tracker -- Validation Tool</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --border: #2a2f3a;
+    --text: #e6e8ec; --muted: #93a0b4; --accent: #4fb0ff; --accent2: #38d39f;
+    --warn: #ffb454; --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.45;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .layout { display: grid; grid-template-columns: minmax(360px, 640px) 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  .panel h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .video-wrap { position: relative; width: 100%; background: #000; border-radius: 8px; overflow: hidden; }
+  video { width: 100%; display: block; }
+  #annotateCanvas { display: block; cursor: crosshair; }
+  canvas.overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; cursor: crosshair; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.primary { background: var(--accent); color: #04121f; border-color: var(--accent); font-weight: 600; }
+  button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  button.danger { border-color: var(--danger); color: var(--danger); }
+  input[type=file] { color: var(--muted); font-size: 13px; }
+  input[type=number] { background: var(--panel2); border: 1px solid var(--border); color: var(--text); padding: 6px 8px; border-radius: 6px; font-size: 13px; width: 90px; }
+  input[type=range] { width: 100%; }
+  label.inline { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #status { font-size: 12.5px; color: var(--muted); white-space: pre-wrap; margin-top: 8px; min-height: 18px; }
+  #status.err { color: var(--danger); }
+  #status.ok { color: var(--accent2); }
+  .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .stat { background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+  .stat .v { font-size: 20px; font-weight: 700; }
+  .stat .l { font-size: 11.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; }
+  table.epochs { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  table.epochs th, table.epochs td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  table.epochs th { color: var(--muted); font-weight: 500; }
+  .hint { font-size: 12px; color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge.roi-set { background: rgba(56,211,159,.15); color: var(--accent2); }
+  .badge.roi-unset { background: rgba(255,180,84,.15); color: var(--warn); }
+  .legend-dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; vertical-align:middle; }
+</style>
+</head>
+<body>
+
+<h1>Tear Film Tracker &mdash; Validation Tool</h1>
+<div class="subtitle">A companion to the main tracker: pick frames, click to mark every particle you can see by eye, and compare against what the automated detector found on the same frame. Everything runs locally in this tab; nothing is uploaded.</div>
+<div id="status" style="margin-bottom:12px;"></div>
+
+<div class="layout">
+  <div>
+    <div class="panel">
+      <h2>1. Load video</h2>
+      <input type="file" id="fileInput" accept="video/*">
+      <div class="hint" style="margin-top:8px;">Use the same recording (or same device/settings) you're validating from the main tracker.</div>
+    </div>
+
+    <div class="panel">
+      <h2>2. ROI <span id="roiBadge" class="badge roi-unset">not set</span></h2>
+      <div class="video-wrap" id="videoWrap">
+        <video id="video" muted playsinline></video>
+        <canvas class="overlay" id="overlay"></canvas>
+      </div>
+      <div class="row">
+        <button id="btnDrawRoi" disabled>Draw ROI manually (click-drag on frame)</button>
+        <label class="inline" id="loadRoiLabel" style="cursor:pointer; border:1px solid var(--border); padding:8px 14px; border-radius:6px; opacity:.4;">Load ROI (.json)
+          <input type="file" id="loadRoiInput" accept="application/json" style="display:none;" disabled>
+        </label>
+        <button id="btnClearRoi" disabled>Clear ROI</button>
+      </div>
+      <div class="hint" style="margin-top:6px;">Same template file the main tracker saves/loads. Once set, drag inside it to move, or drag a corner to resize.</div>
+    </div>
+
+    <div class="panel">
+      <h2>3. Capture frames &amp; detection settings</h2>
+      <div class="row">
+        <button id="btnCapture" class="primary" disabled>Capture frames from video</button>
+        <label class="inline" id="loadParamsLabel" style="cursor:pointer; border:1px solid var(--border); padding:8px 14px; border-radius:6px; opacity:.4;">Load detection settings (.json)
+          <input type="file" id="loadParamsInput" accept="application/json" style="display:none;" disabled>
+        </label>
+      </div>
+      <div class="hint" style="margin-top:6px;">Load settings straight from the main tracker's exported analysis report (or a plain params JSON) so validation uses the exact same detector configuration -- or leave the sliders below at defaults and tune manually.</div>
+      <div id="captureStatus" class="hint" style="margin-top:6px;"></div>
+
+      <div id="paramsPanel" style="display:none; margin-top:12px;">
+        <div class="row" style="align-items: flex-start;">
+          <label class="inline" style="flex-direction:column;align-items:stretch;">Sensitivity (lower = more detections)
+            <input type="range" id="sldSensitivity" min="1.5" max="8" step="0.1" value="3.0">
+          </label>
+          <label class="inline" style="flex-direction:column;align-items:stretch;">Noise floor
+            <input type="range" id="sldFloor" min="0" max="2" step="0.05" value="0.5">
+          </label>
+        </div>
+        <div class="row" style="align-items: flex-start;">
+          <label class="inline" style="flex-direction:column;align-items:stretch;">Min radius (px)
+            <input type="range" id="sldMinR" min="0.3" max="3" step="0.1" value="0.5">
+          </label>
+          <label class="inline" style="flex-direction:column;align-items:stretch;">Max radius (px)
+            <input type="range" id="sldMaxR" min="1" max="8" step="0.5" value="3.6">
+          </label>
+          <label class="inline" style="flex-direction:column;align-items:stretch;">Glare exclusion buffer (px)
+            <input type="range" id="sldGlareBuffer" min="0" max="25" step="1" value="6">
+          </label>
+        </div>
+        <div class="hint">The two fixation-light reflections are auto-detected per frame and excluded (plus this buffer) before matching -- their bloom edges otherwise get marked/detected as particles by both you and the algorithm. If validation shows lots of matches/false-positives/false-negatives clustered right at the bright reflections, this is the parameter to raise; set to 0 to disable.</div>
+        <div class="row">
+          <label class="inline">Match tolerance (px)
+            <input type="number" id="matchTolerance" value="8" min="1" max="40" step="1">
+          </label>
+          <span class="hint">Max distance between a manual click and an automated detection for them to count as the same particle.</span>
+        </div>
+        <div class="row">
+          <button id="btnExportCalibration" class="primary" disabled>Export calibration (ROI + settings) for main tracker (.json)</button>
+        </div>
+        <div class="hint">Bundles this ROI and whatever detection settings are currently set (manually tuned, or from "Apply these settings" below) into one file &mdash; load it into the main tracker via either "Load ROI (.json)" or "Load detection settings (.json)" in step 2/3, and both apply in one step.</div>
+      </div>
+    </div>
+
+    <div class="panel" id="framePanel" style="display:none;">
+      <h2>4. Mark particles on this frame</h2>
+      <div class="row">
+        <label class="inline">frames to sample
+          <input type="number" id="sampleCount" value="6" min="2" max="20" step="1" style="width:60px;">
+        </label>
+        <button id="btnSuggestFrames">Suggest representative frames</button>
+      </div>
+      <div class="hint">Spreads picks across detected open-eye segments (early/mid/late within each) instead of consecutive frames, which would otherwise all show nearly the same instant -- one segment's mid-point tells you nothing about whether detection holds up right after a blink versus deep into the stable phase.</div>
+      <div class="row" id="sampleNavRow" style="display:none;">
+        <button id="btnPrevSample">&larr; prev suggested</button>
+        <span class="hint" id="sampleLabel" style="min-width:140px;text-align:center;">suggested &ndash;/&ndash;</span>
+        <button id="btnNextSample">next suggested &rarr;</button>
+      </div>
+      <div class="row">
+        <button id="btnPrevFrame">&larr; prev frame</button>
+        <span class="hint" id="frameLabel" style="min-width:110px;text-align:center;">frame &ndash;/&ndash;</span>
+        <button id="btnNextFrame">next frame &rarr;</button>
+      </div>
+      <div class="row">
+        <label class="inline">View
+          <select id="valViewMode">
+            <option value="enhanced">Particle-enhanced (band-pass) -- recommended for marking</option>
+            <option value="bright">Brightened (contrast-stretched)</option>
+            <option value="raw">Raw</option>
+          </select>
+        </label>
+        <label class="inline">Zoom
+          <input type="range" id="zoomSlider" min="1" max="3" step="0.25" value="1.5" style="width:100px;">
+        </label>
+        <label class="inline"><input type="checkbox" id="hideAutoOverlay"> hide automated detections (mark blind first)</label>
+      </div>
+      <div class="hint">If the raw/brightened view looks too dark to make out particles, switch to "particle-enhanced" -- it's the same band-pass filter the detector itself uses, so small particles pop out from the smooth iris/sclera background regardless of how dark the original frame is. Marking with detections hidden first, then revealing them, avoids anchoring your judgment on what the detector already found.</div>
+      <div class="video-wrap" style="margin-top:10px;">
+        <div id="annotateScroll" style="overflow:auto; max-height:640px;">
+          <canvas id="annotateCanvas"></canvas>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:6px;">
+        <span class="legend-dot" style="background:#38d39f;"></span>matched (both agree) &nbsp;
+        <span class="legend-dot" style="background:#ff6b6b;"></span>you marked it, detector missed it (false negative) &nbsp;
+        <span class="legend-dot" style="background:#ffb454;"></span>detector found it, you didn't mark it (false positive)
+      </div>
+      <div class="row">
+        <button id="btnUndoPoint">Undo last point</button>
+        <button id="btnClearPoints" class="danger">Clear points (this frame)</button>
+        <button id="btnSaveFrame" class="primary">Save this frame's comparison</button>
+      </div>
+      <div class="hint" style="margin-top:4px;">Click anywhere on the frame to mark a particle you can see. Right-click a mark to remove it. Zoom in with your browser (Ctrl/Cmd +) if it helps -- the canvas stays click-accurate at any zoom level.</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel" id="frameStatsPanel" style="display:none;">
+      <h2>This frame</h2>
+      <div class="stat-grid">
+        <div class="stat"><div class="v" id="statTP">&ndash;</div><div class="l">matched</div></div>
+        <div class="stat"><div class="v" id="statFN">&ndash;</div><div class="l">missed by detector (FN)</div></div>
+        <div class="stat"><div class="v" id="statFP">&ndash;</div><div class="l">detector false positives</div></div>
+        <div class="stat"><div class="v" id="statPosErr">&ndash;</div><div class="l">mean position error (matched)</div></div>
+      </div>
+      <div class="stat-grid" style="margin-top:10px;">
+        <div class="stat"><div class="v" id="statPrecision">&ndash;</div><div class="l">precision</div></div>
+        <div class="stat"><div class="v" id="statRecall">&ndash;</div><div class="l">recall</div></div>
+        <div class="stat"><div class="v" id="statSizeErr">&ndash;</div><div class="l">mean size error (matched, px)</div></div>
+        <div class="stat"><div class="v" id="statElongation">&ndash;</div><div class="l">mean elongation, this frame's auto dets</div></div>
+      </div>
+      <div class="hint" style="margin-top:6px;">Marks are drawn as ellipses at each particle's actual major/minor axis and orientation (not forced circles), since fast-moving particles blur into small streaks within a single frame -- both manual and automated marks use the same convention so shape is visually and numerically comparable. Elongation of 1.0 = round; higher values = more streak-like.</div>
+    </div>
+
+    <div class="panel" id="aggPanel" style="display:none;">
+      <h2>Aggregate across saved frames</h2>
+      <div class="stat-grid">
+        <div class="stat"><div class="v" id="aggPrecision">&ndash;</div><div class="l">pooled precision</div></div>
+        <div class="stat"><div class="v" id="aggRecall">&ndash;</div><div class="l">pooled recall</div></div>
+        <div class="stat"><div class="v" id="aggF1">&ndash;</div><div class="l">pooled F1</div></div>
+        <div class="stat"><div class="v" id="aggPosErr">&ndash;</div><div class="l">mean position error (px)</div></div>
+        <div class="stat"><div class="v" id="aggSizeErr">&ndash;</div><div class="l">mean size error (px)</div></div>
+        <div class="stat"><div class="v" id="aggElongation">&ndash;</div><div class="l">mean elongation, auto dets</div></div>
+      </div>
+      <table class="epochs" id="aggTable"></table>
+      <div class="row" style="margin-top:12px;">
+        <button id="btnExportValidation" disabled>Export validation report (.json)</button>
+        <button id="btnRemoveLastFrame" disabled>Remove last saved frame</button>
+      </div>
+    </div>
+
+    <div class="panel" id="tunePanel" style="display:none;">
+      <h2>Feed this back into the automated stage</h2>
+      <div class="hint">Searches sensitivity/noise-floor combinations against every frame you've saved above and picks whichever scores best against your own manual marks &mdash; this is how validation findings turn into better automated settings instead of just a report.</div>
+      <div class="row">
+        <button id="btnSuggestSettings" class="primary">Suggest optimal settings from saved frames</button>
+      </div>
+      <div id="tuneStatus" class="hint" style="margin-top:6px;"></div>
+      <div id="tuneResult" style="display:none; margin-top:10px;">
+        <div class="stat-grid" style="grid-template-columns: repeat(3, 1fr);">
+          <div class="stat"><div class="v" id="tuneF1">&ndash;</div><div class="l">best F1</div></div>
+          <div class="stat"><div class="v" id="tuneParams">&ndash;</div><div class="l">sensitivity / floor</div></div>
+          <div class="stat"><div class="v" id="tunePR">&ndash;</div><div class="l">precision / recall</div></div>
+        </div>
+        <div id="tuneBoundaryWarn" class="hint" style="display:none; margin-top:6px; color:var(--warn);"></div>
+        <div class="row" style="margin-top:10px;">
+          <button id="btnApplySuggested">Apply these settings here</button>
+          <button id="btnExportSuggested" class="primary">Export these settings (.json) for the main tracker</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Notes</h2>
+      <div class="hint">
+        &bull; This measures the detector against a human's judgment of what's a real particle on a handful of frames -- it is not a replacement for tracking accuracy (speed/radius over time), only for whether individual-frame detection is finding real particles and not spurious noise.<br><br>
+        &bull; Annotate frames spread across the recording (not just consecutive ones) and across a few different recordings/eyes if you can -- a handful of adjacent frames from one clip will under-represent how detection performs on your actual variability.<br><br>
+        &bull; Position error is only computed on matched pairs; it reflects how precisely the detector centers on a particle, not whether it found one.<br><br>
+        &bull; Your own clicks aren't perfectly precise either -- treat small position errors (a couple of px) as noise in the human annotation, not detector error.
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+<script>// Particle tracking core library (vanilla JS, no dependencies).
+// Ports the validated Python/OpenCV pipeline (tear_particle_track.py) into
+// browser-runnable JS so it can run entirely client-side on a user-selected
+// video region. Designed to be included as a <script> tag directly (defines
+// window.PTLib) AND to be `require`-able from Node for offline unit testing
+// (module.exports = PTLib when running under Node).
+//
+// All image data is represented as {width, height, data} where data is a
+// Float32Array of grayscale values in [0,255], row-major.
+
+(function (root) {
+  "use strict";
+
+  function makeImg(width, height, fill) {
+    return { width, height, data: new Float32Array(width * height).fill(fill || 0) };
+  }
+
+  // ---- box blur (3x repeated box blur ~= Gaussian blur, standard trick) ----
+  function boxBlur1D(src, w, h, radius, horizontal, dst) {
+    // src/dst are Float32Array length w*h. Sliding-window sum, O(N) per line.
+    const size = 2 * radius + 1;
+    if (horizontal) {
+      for (let y = 0; y < h; y++) {
+        const rowOff = y * w;
+        let sum = 0;
+        for (let x = -radius; x <= radius; x++) {
+          const xx = Math.min(w - 1, Math.max(0, x));
+          sum += src[rowOff + xx];
+        }
+        for (let x = 0; x < w; x++) {
+          dst[rowOff + x] = sum / size;
+          const xOut = Math.min(w - 1, Math.max(0, x - radius));
+          const xIn = Math.min(w - 1, Math.max(0, x + radius + 1));
+          sum += src[rowOff + xIn] - src[rowOff + xOut];
+        }
+      }
+    } else {
+      for (let x = 0; x < w; x++) {
+        let sum = 0;
+        for (let y = -radius; y <= radius; y++) {
+          const yy = Math.min(h - 1, Math.max(0, y));
+          sum += src[yy * w + x];
+        }
+        for (let y = 0; y < h; y++) {
+          dst[y * w + x] = sum / size;
+          const yOut = Math.min(h - 1, Math.max(0, y - radius));
+          const yIn = Math.min(h - 1, Math.max(0, y + radius + 1));
+          sum += src[yIn * w + x] - src[yOut * w + x];
+        }
+      }
+    }
+  }
+
+  function gaussianBlur(img, sigma) {
+    // Approximate a Gaussian via 3 passes of box blur (Wells 1986 trick).
+    // radius chosen so the box-blur variance matches the target sigma.
+    if (sigma <= 0) return { width: img.width, height: img.height, data: img.data.slice() };
+    const w = img.width, h = img.height;
+    let radius = Math.max(1, Math.round(sigma * 1.88));
+    let a = img.data, b = new Float32Array(w * h), tmp = new Float32Array(w * h);
+    for (let pass = 0; pass < 3; pass++) {
+      boxBlur1D(a, w, h, radius, true, tmp);
+      boxBlur1D(tmp, w, h, radius, false, b);
+      a = b;
+      b = pass < 2 ? new Float32Array(w * h) : b;
+    }
+    return { width: w, height: h, data: a };
+  }
+
+  function bandpass(img, sigmaSmall, sigmaLarge) {
+    const small = gaussianBlur(img, sigmaSmall);
+    const large = gaussianBlur(img, sigmaLarge);
+    const w = img.width, h = img.height;
+    const out = new Float32Array(w * h);
+    for (let i = 0; i < out.length; i++) {
+      const v = small.data[i] - large.data[i];
+      out[i] = v > 0 ? v : 0;
+    }
+    return { width: w, height: h, data: out };
+  }
+
+  // ---- integral image for O(1) box-sum queries (local mean/std) ----
+  function buildIntegral(data, w, h) {
+    // (w+1) x (h+1) integral image, integral[y][x] = sum of rect (0,0)-(x-1,y-1)
+    const sum = new Float64Array((w + 1) * (h + 1));
+    const sqsum = new Float64Array((w + 1) * (h + 1));
+    for (let y = 0; y < h; y++) {
+      let rowSum = 0, rowSq = 0;
+      for (let x = 0; x < w; x++) {
+        const v = data[y * w + x];
+        rowSum += v;
+        rowSq += v * v;
+        const idx = (y + 1) * (w + 1) + (x + 1);
+        sum[idx] = sum[idx - (w + 1)] + rowSum;
+        sqsum[idx] = sqsum[idx - (w + 1)] + rowSq;
+      }
+    }
+    return { sum, sqsum, w, h };
+  }
+
+  function boxQuery(integral, x0, y0, x1, y1) {
+    // inclusive-exclusive rect [x0,x1) x [y0,y1), clamped
+    const w = integral.w, h = integral.h;
+    x0 = Math.max(0, Math.min(w, x0));
+    x1 = Math.max(0, Math.min(w, x1));
+    y0 = Math.max(0, Math.min(h, y0));
+    y1 = Math.max(0, Math.min(h, y1));
+    const s = integral.sum, W = w + 1;
+    const total = s[y1 * W + x1] - s[y0 * W + x1] - s[y1 * W + x0] + s[y0 * W + x0];
+    const sq = integral.sqsum;
+    const totalSq = sq[y1 * W + x1] - sq[y0 * W + x1] - sq[y1 * W + x0] + sq[y0 * W + x0];
+    const n = (x1 - x0) * (y1 - y0);
+    return { total, totalSq, n };
+  }
+
+  function localMeanStd(img, win) {
+    const w = img.width, h = img.height;
+    const integral = buildIntegral(img.data, w, h);
+    const mean = new Float32Array(w * h), std = new Float32Array(w * h);
+    const r = Math.floor(win / 2);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const q = boxQuery(integral, x - r, y - r, x + r + 1, y + r + 1);
+        const n = q.n || 1;
+        const m = q.total / n;
+        const v = Math.max(0, q.totalSq / n - m * m);
+        mean[y * w + x] = m;
+        std[y * w + x] = Math.sqrt(v);
+      }
+    }
+    return { mean, std };
+  }
+
+  // ---- locally-adaptive particle detection (mirrors detect_particles in the
+  // Python pipeline, including the lesson learned there: a single global
+  // threshold badly under-detects faint particles in low-contrast regions) ----
+  function detectParticles(dogImg, roiMask, opts) {
+    opts = opts || {};
+    const thresh_k = opts.thresh_k != null ? opts.thresh_k : 3.0;
+    const floor = opts.floor != null ? opts.floor : 0.5;
+    const win = opts.win || 41;
+    const minArea = opts.minArea || 1;
+    const maxArea = opts.maxArea || 40;
+    const w = dogImg.width, h = dogImg.height;
+    const { mean, std } = localMeanStd(dogImg, win);
+    const binary = new Uint8Array(w * h);
+    for (let i = 0; i < binary.length; i++) {
+      if (roiMask[i] && dogImg.data[i] > mean[i] + thresh_k * std[i] + floor) binary[i] = 1;
+    }
+    return connectedComponents(binary, w, h, minArea, maxArea, dogImg.data);
+  }
+
+  function connectedComponents(binary, w, h, minArea, maxArea, valueImgData) {
+    const visited = new Uint8Array(w * h);
+    const dets = [];
+    const stackX = new Int32Array(w * h), stackY = new Int32Array(w * h);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const idx = y * w + x;
+        if (!binary[idx] || visited[idx]) continue;
+        // flood fill (4-connectivity) using explicit stack
+        let sp = 0;
+        stackX[sp] = x; stackY[sp] = y; sp++;
+        visited[idx] = 1;
+        let sumX = 0, sumY = 0, sumXX = 0, sumYY = 0, sumXY = 0, area = 0, peak = -Infinity;
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        while (sp > 0) {
+          sp--;
+          const cx = stackX[sp], cy = stackY[sp];
+          const cidx = cy * w + cx;
+          sumX += cx; sumY += cy; sumXX += cx * cx; sumYY += cy * cy; sumXY += cx * cy; area++;
+          if (cx < minX) minX = cx; if (cx > maxX) maxX = cx;
+          if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+          if (valueImgData && valueImgData[cidx] > peak) peak = valueImgData[cidx];
+          const neighbors = [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]];
+          for (const [nx, ny] of neighbors) {
+            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+            const nidx = ny * w + nx;
+            if (binary[nidx] && !visited[nidx]) {
+              visited[nidx] = 1;
+              stackX[sp] = nx; stackY[sp] = ny; sp++;
+            }
+          }
+          if (area > maxArea + 5) break; // early bail, not a valid particle anyway
+        }
+        if (area >= minArea && area <= maxArea) {
+          const cx = sumX / area, cy = sumY / area;
+          // Shape descriptors from the blob's second-moment (covariance) matrix -- this is the
+          // "equivalent ellipse" of the blob, not just its bounding box, so it's robust to
+          // diagonal streaks. For a filled circle these reduce back to radius=majorR=minorR
+          // (a real particle); for motion-blur streaks majorR >> minorR, which the plain
+          // area-derived `radius` below can't distinguish (it always assumes circular).
+          const Ixx = sumXX / area - cx * cx, Iyy = sumYY / area - cy * cy, Ixy = sumXY / area - cx * cy;
+          const mid = (Ixx + Iyy) / 2, spread = Math.sqrt(Math.max(0, ((Ixx - Iyy) / 2) ** 2 + Ixy * Ixy));
+          const majorR = 2 * Math.sqrt(Math.max(0, mid + spread));
+          const minorR = 2 * Math.sqrt(Math.max(0, mid - spread));
+          const orientationRad = 0.5 * Math.atan2(2 * Ixy, Ixx - Iyy);
+          const elongation = minorR > 1e-6 ? majorR / minorR : (majorR > 1e-6 ? 99 : 1);
+          dets.push({
+            x: cx, y: cy, area, radius: Math.sqrt(area / Math.PI), intensity: peak, minX, maxX, minY, maxY,
+            majorR, minorR, orientationRad, elongation,
+          });
+        }
+      }
+    }
+    return dets;
+  }
+
+  // ---- fixation-light glare exclusion ----
+  // The Keratograph projects exactly two small fixation-light reflections
+  // onto the tear film; up close they're compact, very bright, round blobs
+  // whose bloom/diffraction edges look identical to real particles under the
+  // same band-pass view, which shows up as a cluster of both real and false
+  // detections (and human marks) right around them. The validated Python
+  // prototype excluded a buffer around these for corneal segmentation; this
+  // mirrors that idea for particle detection itself. We take the top
+  // `maxLights` largest compact, non-border-touching bright blobs (rather
+  // than a fixed area window) since real fixation-light size varies with
+  // zoom/device, but there are reliably at most two of them.
+  function fixationLightMask(gimg, roiMask, opts) {
+    opts = opts || {};
+    const brightThresh = opts.brightThresh != null ? opts.brightThresh : 240;
+    const minArea = opts.minArea != null ? opts.minArea : 8;
+    const bufferPx = opts.bufferPx != null ? opts.bufferPx : 6;
+    const maxLights = opts.maxLights != null ? opts.maxLights : 2;
+    const w = gimg.width, h = gimg.height;
+    const binary = new Uint8Array(w * h);
+    for (let i = 0; i < w * h; i++) if ((!roiMask || roiMask[i]) && gimg.data[i] > brightThresh) binary[i] = 1;
+    const comps = connectedComponents(binary, w, h, minArea, w * h, gimg.data);
+    const compact = comps.filter((c) => c.minX > 0 && c.maxX < w - 1 && c.minY > 0 && c.maxY < h - 1);
+    compact.sort((a, b) => b.area - a.area);
+    const lights = compact.slice(0, maxLights);
+    const mask = new Uint8Array(w * h);
+    for (const c of lights) {
+      const r = c.radius + bufferPx;
+      const x0 = Math.max(0, Math.floor(c.x - r)), x1 = Math.min(w, Math.ceil(c.x + r));
+      const y0 = Math.max(0, Math.floor(c.y - r)), y1 = Math.min(h, Math.ceil(c.y + r));
+      const r2 = r * r;
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          if ((x - c.x) * (x - c.x) + (y - c.y) * (y - c.y) <= r2) mask[y * w + x] = 1;
+        }
+      }
+    }
+    return { mask, lights };
+  }
+
+  // ---- estimate a manually-clicked particle's actual size ----
+  // A click is only ever a position judgment -- a human can point at a blob
+  // but can't precisely convey "this one is 2.3px radius" by eye. Without
+  // this, every manual mark would implicitly have zero/uniform size, making
+  // it impossible to validate whether the detector's own radius estimates
+  // are trustworthy (only whether it found a particle there at all). Instead,
+  // snap the click to the local peak of the same band-pass signal the
+  // detector itself uses, then region-grow outward to the half-maximum
+  // boundary (the standard FWHM convention for measuring a blob/spot's
+  // extent in imaging) -- this derives size from the actual pixel data at
+  // that location rather than from the click itself, which is the right
+  // division of labor: the human judges *where*, the algorithm measures
+  // *how big*, using signal the human can't precisely gauge by eye anyway.
+  function estimateParticleExtent(dogImg, cx, cy, opts) {
+    opts = opts || {};
+    const searchR = opts.searchR != null ? opts.searchR : 4;
+    const relThresh = opts.relThresh != null ? opts.relThresh : 0.5; // half-max (FWHM)
+    const maxRadius = opts.maxRadius != null ? opts.maxRadius : 12;
+    const w = dogImg.width, h = dogImg.height;
+    const ix0 = Math.round(cx), iy0 = Math.round(cy);
+    let peakX = ix0, peakY = iy0, peakV = -Infinity;
+    for (let dy = -searchR; dy <= searchR; dy++) {
+      for (let dx = -searchR; dx <= searchR; dx++) {
+        const x = ix0 + dx, y = iy0 + dy;
+        if (x < 0 || x >= w || y < 0 || y >= h) continue;
+        const v = dogImg.data[y * w + x];
+        if (v > peakV) { peakV = v; peakX = x; peakY = y; }
+      }
+    }
+    if (peakV <= 0) return { x: cx, y: cy, radius: 1, area: 1, peakValue: peakV, degenerate: true };
+    const thresh = peakV * relThresh;
+    const x0 = Math.max(0, peakX - maxRadius), x1 = Math.min(w, peakX + maxRadius + 1);
+    const y0 = Math.max(0, peakY - maxRadius), y1 = Math.min(h, peakY + maxRadius + 1);
+    const visited = new Uint8Array(w * h);
+    const stackX = [], stackY = [];
+    stackX.push(peakX); stackY.push(peakY);
+    visited[peakY * w + peakX] = 1;
+    let sumX = 0, sumY = 0, sumXX = 0, sumYY = 0, sumXY = 0, area = 0;
+    while (stackX.length) {
+      const cx2 = stackX.pop(), cy2 = stackY.pop();
+      sumX += cx2; sumY += cy2; sumXX += cx2 * cx2; sumYY += cy2 * cy2; sumXY += cx2 * cy2; area++;
+      const neighbors = [[cx2 - 1, cy2], [cx2 + 1, cy2], [cx2, cy2 - 1], [cx2, cy2 + 1]];
+      for (const [nx, ny] of neighbors) {
+        if (nx < x0 || nx >= x1 || ny < y0 || ny >= y1) continue;
+        const nidx = ny * w + nx;
+        if (visited[nidx]) continue;
+        if (dogImg.data[nidx] >= thresh) { visited[nidx] = 1; stackX.push(nx); stackY.push(ny); }
+      }
+    }
+    const ecx = sumX / area, ecy = sumY / area;
+    // Same equivalent-ellipse shape descriptors as connectedComponents (see comment there) --
+    // computed here too since manual clicks and auto detections both go through this function
+    // for their FWHM ground-truth size, and both can be genuine motion-blur streaks.
+    const Ixx = sumXX / area - ecx * ecx, Iyy = sumYY / area - ecy * ecy, Ixy = sumXY / area - ecx * ecy;
+    const mid = (Ixx + Iyy) / 2, spread = Math.sqrt(Math.max(0, ((Ixx - Iyy) / 2) ** 2 + Ixy * Ixy));
+    const majorR = 2 * Math.sqrt(Math.max(0, mid + spread));
+    const minorR = 2 * Math.sqrt(Math.max(0, mid - spread));
+    const orientationRad = 0.5 * Math.atan2(2 * Ixy, Ixx - Iyy);
+    const elongation = minorR > 1e-6 ? majorR / minorR : (majorR > 1e-6 ? 99 : 1);
+    return {
+      x: ecx, y: ecy, area, radius: Math.sqrt(area / Math.PI), peakValue: peakV, degenerate: false,
+      majorR, minorR, orientationRad, elongation,
+    };
+  }
+
+  // ---- frame-to-frame registration via brute-force block matching ----
+  // (Chosen over FFT phase correlation: while building the Python prototype,
+  // plain phase correlation on this kind of low-texture, compressed footage
+  // occasionally locked onto noise and produced 100+ px "shifts" in a single
+  // frame, corrupting the whole pipeline. Brute-force SSD search combined
+  // with a confidence check -- best match must clearly beat the runner-up --
+  // is slower but far more robust to that failure mode, and the search
+  // window here is small enough (dozens of candidate shifts over a modest
+  // patch) that it's still fast in plain JS.)
+  function estimateShift(prevGray, currGray, w, h, region, maxShift) {
+    maxShift = maxShift || 15;
+    const step = 2; // downsample patch sampling for speed
+    const x0 = region.x, y0 = region.y, rw = region.w, rh = region.h;
+    let best = Infinity, second = Infinity, bestDx = 0, bestDy = 0;
+    for (let dy = -maxShift; dy <= maxShift; dy += 1) {
+      for (let dx = -maxShift; dx <= maxShift; dx += 1) {
+        let ssd = 0, n = 0;
+        for (let y = y0; y < y0 + rh; y += step) {
+          const sy = y + dy;
+          if (sy < 0 || sy >= h) continue;
+          for (let x = x0; x < x0 + rw; x += step) {
+            const sx = x + dx;
+            if (sx < 0 || sx >= w) continue;
+            const diff = currGray[y * w + x] - prevGray[sy * w + sx];
+            ssd += diff * diff;
+            n++;
+          }
+        }
+        if (n === 0) continue;
+        ssd /= n;
+        if (ssd < best) { second = best; best = ssd; bestDx = dx; bestDy = dy; }
+        else if (ssd < second) { second = ssd; }
+      }
+    }
+    const confidence = second === Infinity ? 0 : (second - best) / (second + 1e-6);
+    if (confidence < 0.03 || (bestDx === 0 && bestDy === 0 && confidence < 0.05)) {
+      return { dx: 0, dy: 0, confidence };
+    }
+    return { dx: bestDx, dy: bestDy, confidence };
+  }
+
+  // ---- blink detection & epoch segmentation ----
+  // A blink sweeps the eyelid across the field of view: the two fixation-light
+  // reflections vanish and overall brightness swings sharply for 1-3 frames at
+  // this frame rate. Tracking (or even registering) *across* a blink is
+  // meaningless -- it isn't the same tear film on the other side, and the
+  // eyelid-vs-cornea content change breaks frame registration outright -- so
+  // the recording is split into independent open-eye epochs at each detected
+  // blink, matching how the published Keratograph studies analyze data as
+  // "time since last blink" per inter-blink cycle rather than one long clip.
+  function computeFrameSignal(grayFrames, w, h, roi, brightThresh) {
+    brightThresh = brightThresh != null ? brightThresh : 235;
+    const signal = [];
+    for (const g of grayFrames) {
+      let sum = 0, n = 0, brightCount = 0;
+      for (let y = roi.y; y < roi.y + roi.h; y++) {
+        for (let x = roi.x; x < roi.x + roi.w; x++) {
+          const v = g[y * w + x];
+          sum += v; n++;
+          if (v > brightThresh) brightCount++;
+        }
+      }
+      signal.push({ mean: sum / (n || 1), brightCount });
+    }
+    return signal;
+  }
+
+  function median(arr) {
+    const s = arr.slice().sort((a, b) => a - b);
+    const n = s.length;
+    return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2;
+  }
+
+  function robustZ(values) {
+    const med = median(values);
+    const mad = median(values.map((v) => Math.abs(v - med))) + 1e-6;
+    return values.map((v) => (v - med) / (1.4826 * mad));
+  }
+
+  function detectBlinks(signal, opts) {
+    opts = opts || {};
+    const padFrames = opts.padFrames != null ? opts.padFrames : 1;
+    const zThresh = opts.zThresh != null ? opts.zThresh : 4.0;
+    const n = signal.length;
+    if (n < 3) return [];
+    // A blink is a large deviation from the clip's *typical* (median) frame,
+    // in either direction: on this footage a blink shows up as a brightness
+    // SPIKE (closed lid reflects brightly across the whole frame) rather
+    // than a dip, which is the opposite of a naive "glare disappears"
+    // assumption -- an earlier version of this function assumed only the
+    // dip case, normalized by the single brightest frame in the clip, and
+    // that single blink frame (being far brighter than everything else)
+    // made every normal frame's ratio look artificially tiny, flagging the
+    // entire clip as one giant blink. Using a robust z-score against the
+    // median (not the max) on both signals, in both directions, fixes that
+    // and generalizes to devices where the blink signature goes either way.
+    const meanZ = robustZ(signal.map((s) => s.mean));
+    const brightZ = robustZ(signal.map((s) => s.brightCount));
+    const flagged = signal.map((s, i) => Math.abs(meanZ[i]) > zThresh || Math.abs(brightZ[i]) > zThresh);
+    // group flagged frames into ranges, then pad by padFrames on each side
+    const ranges = [];
+    let i = 0;
+    while (i < n) {
+      if (flagged[i]) {
+        let j = i;
+        while (j < n && flagged[j]) j++;
+        ranges.push([Math.max(0, i - padFrames), Math.min(n - 1, j - 1 + padFrames)]);
+        i = j;
+      } else i++;
+    }
+    // merge overlapping/adjacent ranges
+    ranges.sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    for (const r of ranges) {
+      if (merged.length && r[0] <= merged[merged.length - 1][1] + 1) {
+        merged[merged.length - 1][1] = Math.max(merged[merged.length - 1][1], r[1]);
+      } else merged.push(r.slice());
+    }
+    return merged;
+  }
+
+  function segmentEpochs(numFrames, blinkRanges, minEpochLen) {
+    minEpochLen = minEpochLen || 5;
+    const cuts = [0];
+    for (const [s, e] of blinkRanges) { cuts.push(s); cuts.push(e + 1); }
+    cuts.push(numFrames);
+    const epochs = [];
+    for (let k = 0; k + 1 < cuts.length; k += 2) {
+      const start = cuts[k], end = cuts[k + 1];
+      if (end - start >= minEpochLen) epochs.push({ start, end }); // [start, end)
+    }
+    return epochs;
+  }
+
+  // ---- greedy nearest-neighbor tracker (mirrors the Python fallback linker) ----
+  function linkTracks(allDets, maxDist, maxGap, minLen) {
+    maxDist = maxDist || 18;
+    maxGap = maxGap || 2;
+    minLen = minLen || 3;
+    let nextId = 0;
+    let active = [];
+    const finished = [];
+    for (let f = 0; f < allDets.length; f++) {
+      const dets = allDets[f];
+      if (active.length === 0) {
+        for (const d of dets) {
+          active.push({ id: nextId++, lastFrame: f, x: d.x, y: d.y, history: [[f, d]] });
+        }
+        continue;
+      }
+      if (dets.length) {
+        const pairs = [];
+        for (let i = 0; i < active.length; i++) {
+          for (let j = 0; j < dets.length; j++) {
+            const dx = active[i].x - dets[j].x, dy = active[i].y - dets[j].y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist <= maxDist) pairs.push([dist, i, j]);
+          }
+        }
+        pairs.sort((a, b) => a[0] - b[0]);
+        const usedA = new Set(), usedD = new Set();
+        for (const [dist, i, j] of pairs) {
+          if (usedA.has(i) || usedD.has(j)) continue;
+          usedA.add(i); usedD.add(j);
+          const a = active[i];
+          a.history.push([f, dets[j]]);
+          a.lastFrame = f;
+          a.x = dets[j].x; a.y = dets[j].y;
+        }
+        for (let j = 0; j < dets.length; j++) {
+          if (!usedD.has(j)) {
+            active.push({ id: nextId++, lastFrame: f, x: dets[j].x, y: dets[j].y, history: [[f, dets[j]]] });
+          }
+        }
+      }
+      const stillActive = [];
+      for (const a of active) {
+        if (f - a.lastFrame <= maxGap) stillActive.push(a);
+        else finished.push(a);
+      }
+      active = stillActive;
+    }
+    finished.push(...active);
+    return finished.filter((t) => t.history.length >= minLen);
+  }
+
+  function trackKinematics(tracks, fps) {
+    const rows = [];
+    for (const t of tracks) {
+      const hist = t.history;
+      for (let k = 1; k < hist.length; k++) {
+        const [f0, d0] = hist[k - 1];
+        const [f1, d1] = hist[k];
+        const dt = (f1 - f0) / fps;
+        if (dt <= 0) continue;
+        const dx = d1.x - d0.x, dy = d1.y - d0.y;
+        const dist = Math.hypot(dx, dy);
+        rows.push({ track_id: t.id, frame: f1, x: d1.x, y: d1.y, radius_px: d1.radius, step_dist_px: dist, speed_px_per_s: dist / dt, dx, dy });
+      }
+    }
+    return rows;
+  }
+
+  // ---- flow direction / coherence ----
+  // Mean-resultant-vector statistic from circular statistics: normalize each
+  // step to a unit direction vector, average them, and the length of that
+  // average (R, 0..1) measures how consistently particles move the same way
+  // (1 = all moving in lockstep, 0 = directions cancel out/random). The mean
+  // angle is reported in image-pixel coordinates (0 deg = +x/right, 90 deg =
+  // +y/down, since row-major image y increases downward) -- this is NOT
+  // automatically nasal/temporal or superior/inferior; that mapping depends
+  // on how the eye was framed and isn't something we can infer from pixels
+  // alone, so callers should annotate/caveat accordingly rather than assume.
+  function flowStats(kinRows) {
+    let sx = 0, sy = 0, n = 0;
+    for (const r of kinRows) {
+      const d = Math.hypot(r.dx, r.dy);
+      if (d <= 0) continue;
+      sx += r.dx / d; sy += r.dy / d; n++;
+    }
+    if (n === 0) return { n: 0, coherence: null, meanAngleDeg: null };
+    const mx = sx / n, my = sy / n;
+    const coherence = Math.hypot(mx, my);
+    let meanAngleDeg = (Math.atan2(my, mx) * 180) / Math.PI;
+    if (meanAngleDeg < 0) meanAngleDeg += 360;
+    return { n, coherence, meanAngleDeg };
+  }
+
+  // ---- upper-eyelid closure/reopening kinematics ----
+  // Direct visual inspection of real blink frames (bozkurt/aydin) showed the
+  // eyelid sweeps from fully open to a fully-occluding, blown-out-bright
+  // frame (the lid surface fills the whole field of view at close range)
+  // within a single ~143ms frame interval at this device's 7fps, and
+  // reopens over roughly 1-2 frames. That means we cannot resolve a smooth
+  // position-vs-time trace the way the tear-film particle tracker does --
+  // there usually aren't enough transitional frames. What IS honestly
+  // recoverable: (1) the frame of peak brightness within each blink range,
+  // which marks the moment of fullest closure, splitting the blink into a
+  // closing phase (last open frame -> peak) and reopening phase (peak ->
+  // first open frame after), and (2) from those phase durations plus an
+  // excursion-distance proxy (the ROI height -- the user draws the ROI over
+  // the visible corneal/palpebral opening, so its height approximates the
+  // lid travel distance at that location), an AVERAGE velocity per phase.
+  // This is explicitly a lower-bound/average estimate, not a peak velocity:
+  // the true motion happens somewhere inside that frame interval, which may
+  // be faster than 1/fps, so real peak lid velocity is probably higher than
+  // what's reported here. Edge blinks (touching frame 0 or the last frame)
+  // are skipped since there's no open reference frame on one side.
+  function blinkKinematics(signal, blinkRanges, frameTimes, numFrames, roiHeightPx) {
+    const out = [];
+    for (const [s, e] of blinkRanges) {
+      if (s <= 0 || e >= numFrames - 1) { out.push({ s, e, edge: true }); continue; }
+      let peakIdx = s, peakVal = -Infinity;
+      for (let i = s; i <= e; i++) if (signal[i].mean > peakVal) { peakVal = signal[i].mean; peakIdx = i; }
+      const t_before = frameTimes[s - 1], t_after = frameTimes[e + 1], t_peak = frameTimes[peakIdx];
+      const closingDuration = t_peak - t_before;
+      const reopeningDuration = t_after - t_peak;
+      out.push({
+        s, e, edge: false, peakIdx, peakVal, t_before, t_after, t_peak,
+        closingDuration, reopeningDuration, totalDuration: t_after - t_before,
+        closingVelocity_pxps: closingDuration > 0 ? roiHeightPx / closingDuration : null,
+        reopeningVelocity_pxps: reopeningDuration > 0 ? roiHeightPx / reopeningDuration : null,
+      });
+    }
+    return out;
+  }
+
+  // ---- quality / reliability statistics ----
+  // CV (coefficient of variation) mirrors the repeatability metric the
+  // published Keratograph tear-film studies report, so a user can sanity
+  // check their own data against those benchmarks.
+  function percentile(sortedArr, p) {
+    if (!sortedArr.length) return null;
+    const idx = (sortedArr.length - 1) * p;
+    const lo = Math.floor(idx), hi = Math.ceil(idx);
+    if (lo === hi) return sortedArr[lo];
+    return sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * (idx - lo);
+  }
+
+  function computeStats(values) {
+    const v = values.filter((x) => x != null && !Number.isNaN(x));
+    const n = v.length;
+    if (n === 0) return { n: 0, mean: null, sd: null, cv: null, median: null, p25: null, p75: null, p90: null, min: null, max: null };
+    const mean = v.reduce((a, b) => a + b, 0) / n;
+    const variance = v.reduce((a, b) => a + (b - mean) * (b - mean), 0) / Math.max(1, n - 1);
+    const sd = Math.sqrt(variance);
+    const sorted = v.slice().sort((a, b) => a - b);
+    return {
+      n, mean, sd, cv: mean !== 0 ? (sd / mean) * 100 : null,
+      median: percentile(sorted, 0.5), p25: percentile(sorted, 0.25), p75: percentile(sorted, 0.75), p90: percentile(sorted, 0.9),
+      min: sorted[0], max: sorted[n - 1],
+    };
+  }
+
+  // ---- bin kinematics rows by time-since-blink to reveal non-homogeneous
+  // speed over the inter-blink period (fast right after the blink, decaying
+  // as the tear film re-equilibrates) ----
+  function binByTime(rows, binSize, maxTime) {
+    binSize = binSize || 0.15;
+    const bins = [];
+    const nBins = Math.ceil((maxTime || Math.max(0, ...rows.map((r) => r.time_since_blink_s || 0))) / binSize) + 1;
+    for (let i = 0; i < nBins; i++) bins.push([]);
+    for (const r of rows) {
+      if (r.time_since_blink_s == null) continue;
+      const b = Math.min(nBins - 1, Math.max(0, Math.floor(r.time_since_blink_s / binSize)));
+      bins[b].push(r.speed_px_per_s);
+    }
+    return bins.map((speeds, i) => ({ t: i * binSize + binSize / 2, stats: computeStats(speeds) }))
+      .filter((b) => b.stats.n > 0);
+  }
+
+  // ---- display-only enhancement: expose the same band-pass filter used for
+  // detection as a way to *see* faint particles better (it suppresses smooth
+  // iris/sclera texture and leaves small blobs standing out), plus a simple
+  // percentile contrast stretch for the plain "brighten" case. Returns a
+  // Uint8ClampedArray-friendly Float32Array in [0,255] for canvas drawing.
+  function contrastStretch(img, loPct, hiPct) {
+    loPct = loPct != null ? loPct : 0.01;
+    hiPct = hiPct != null ? hiPct : 0.995;
+    const sorted = img.data.slice().sort((a, b) => a - b);
+    const lo = sorted[Math.floor(sorted.length * loPct)];
+    const hi = sorted[Math.floor(sorted.length * hiPct)];
+    const range = Math.max(1e-6, hi - lo);
+    const out = new Float32Array(img.data.length);
+    for (let i = 0; i < out.length; i++) out[i] = Math.max(0, Math.min(255, ((img.data[i] - lo) / range) * 255));
+    return { width: img.width, height: img.height, data: out };
+  }
+
+  function particleEnhancedView(img, sigmaSmall, sigmaLarge) {
+    // Tried two fancier alternatives here first (a local z-score map matching
+    // the detector's own threshold statistic, and frame-to-frame differencing
+    // to exploit motion) -- checked both by eye against real frames and both
+    // came out worse: the z-score map amplifies iris-crypt edges just as much
+    // as real particles (crypts are locally sharp too, over a 41px window),
+    // and raw frame differencing on this heavily-compressed video is mostly
+    // compression noise rather than true motion. Plain band-pass, viewed
+    // directly, ends up the clearest: real particles render as small round
+    // blobs, distinguishable by eye from the linear/fibrous iris-crypt
+    // texture that also lights up in this view.
+    const dog = bandpass(img, sigmaSmall || 1.0, sigmaLarge || 6.0);
+    return contrastStretch(dog, 0.01, 0.999);
+  }
+
+  const PTLib = {
+    makeImg, gaussianBlur, bandpass, buildIntegral, boxQuery, localMeanStd,
+    computeStats, percentile, binByTime, contrastStretch, particleEnhancedView,
+    detectParticles, connectedComponents, estimateShift, linkTracks, trackKinematics,
+    computeFrameSignal, detectBlinks, segmentEpochs, median, blinkKinematics, flowStats,
+    fixationLightMask, estimateParticleExtent,
+  };
+
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = PTLib;
+  } else {
+    root.PTLib = PTLib;
+  }
+})(typeof window !== "undefined" ? window : globalThis);
+</script>
+<script>/* ======================= Validation tool application logic =======================
+   Companion to the main tracker: runs the same automated detectParticles
+   pipeline (PTLib, bundled inline below) on user-chosen frames, lets the user
+   manually click-mark every particle they can see, and compares the two sets
+   to report precision/recall/false-positive/false-negative counts and mean
+   position error on matches. Reuses the ROI-drawing (drag/resize) and frame
+   capture code verbatim from the main tracker's app.js -- both already
+   validated there against real video frames. */
+(function () {
+  "use strict";
+
+  const els = {
+    fileInput: document.getElementById("fileInput"),
+    video: document.getElementById("video"),
+    overlay: document.getElementById("overlay"),
+    videoWrap: document.getElementById("videoWrap"),
+    btnDrawRoi: document.getElementById("btnDrawRoi"),
+    btnClearRoi: document.getElementById("btnClearRoi"),
+    loadRoiInput: document.getElementById("loadRoiInput"),
+    loadRoiLabel: document.getElementById("loadRoiLabel"),
+    roiBadge: document.getElementById("roiBadge"),
+    btnCapture: document.getElementById("btnCapture"),
+    captureStatus: document.getElementById("captureStatus"),
+    loadParamsInput: document.getElementById("loadParamsInput"),
+    loadParamsLabel: document.getElementById("loadParamsLabel"),
+    paramsPanel: document.getElementById("paramsPanel"),
+    sldSensitivity: document.getElementById("sldSensitivity"),
+    sldFloor: document.getElementById("sldFloor"),
+    sldMinR: document.getElementById("sldMinR"),
+    sldMaxR: document.getElementById("sldMaxR"),
+    sldGlareBuffer: document.getElementById("sldGlareBuffer"),
+    matchTolerance: document.getElementById("matchTolerance"),
+    btnExportCalibration: document.getElementById("btnExportCalibration"),
+    framePanel: document.getElementById("framePanel"),
+    sampleCount: document.getElementById("sampleCount"),
+    btnSuggestFrames: document.getElementById("btnSuggestFrames"),
+    sampleNavRow: document.getElementById("sampleNavRow"),
+    btnPrevSample: document.getElementById("btnPrevSample"),
+    btnNextSample: document.getElementById("btnNextSample"),
+    sampleLabel: document.getElementById("sampleLabel"),
+    btnPrevFrame: document.getElementById("btnPrevFrame"),
+    btnNextFrame: document.getElementById("btnNextFrame"),
+    frameLabel: document.getElementById("frameLabel"),
+    annotateCanvas: document.getElementById("annotateCanvas"),
+    valViewMode: document.getElementById("valViewMode"),
+    zoomSlider: document.getElementById("zoomSlider"),
+    hideAutoOverlay: document.getElementById("hideAutoOverlay"),
+    annotateScroll: document.getElementById("annotateScroll"),
+    btnUndoPoint: document.getElementById("btnUndoPoint"),
+    btnClearPoints: document.getElementById("btnClearPoints"),
+    btnSaveFrame: document.getElementById("btnSaveFrame"),
+    frameStatsPanel: document.getElementById("frameStatsPanel"),
+    statTP: document.getElementById("statTP"),
+    statFN: document.getElementById("statFN"),
+    statFP: document.getElementById("statFP"),
+    statPosErr: document.getElementById("statPosErr"),
+    statPrecision: document.getElementById("statPrecision"),
+    statRecall: document.getElementById("statRecall"),
+    statSizeErr: document.getElementById("statSizeErr"),
+    statElongation: document.getElementById("statElongation"),
+    aggPanel: document.getElementById("aggPanel"),
+    aggPrecision: document.getElementById("aggPrecision"),
+    aggRecall: document.getElementById("aggRecall"),
+    aggF1: document.getElementById("aggF1"),
+    aggPosErr: document.getElementById("aggPosErr"),
+    aggSizeErr: document.getElementById("aggSizeErr"),
+    aggElongation: document.getElementById("aggElongation"),
+    aggTable: document.getElementById("aggTable"),
+    btnExportValidation: document.getElementById("btnExportValidation"),
+    btnRemoveLastFrame: document.getElementById("btnRemoveLastFrame"),
+    status: document.getElementById("status"),
+    tunePanel: document.getElementById("tunePanel"),
+    btnSuggestSettings: document.getElementById("btnSuggestSettings"),
+    tuneStatus: document.getElementById("tuneStatus"),
+    tuneResult: document.getElementById("tuneResult"),
+    tuneF1: document.getElementById("tuneF1"),
+    tuneParams: document.getElementById("tuneParams"),
+    tunePR: document.getElementById("tunePR"),
+    tuneBoundaryWarn: document.getElementById("tuneBoundaryWarn"),
+    btnApplySuggested: document.getElementById("btnApplySuggested"),
+    btnExportSuggested: document.getElementById("btnExportSuggested"),
+  };
+
+  const state = {
+    videoFileName: null,
+    videoLoaded: false,
+    naturalW: 0, naturalH: 0,
+    roi: null,
+    capturedFrames: [],
+    fps: 7,
+    frameIdx: 0,
+    detParams: { thresh_k: 3.0, floor: 0.5, minR: 0.5, maxR: 3.6, win: 41, glareBuffer: 6 },
+    pointsByFrame: new Map(), // frameIdx -> [{x,y}] in natural coords
+    savedFrames: [], // [{frameIdx, tp, fp, fn, precision, recall, meanPosErr, matchedDists:[...]}]
+    suggestedFrames: [], // frame indices from the representative-frame sampler
+    sampleIdx: 0,
+  };
+
+  function setStatus(msg, kind) { if (els.status) { els.status.textContent = msg; els.status.className = kind || ""; } }
+  function fmtNum(v, d) { if (v == null || Number.isNaN(v)) return "–"; return v.toFixed(d != null ? d : 1); }
+
+  /* ================= ROI-drawing helper (identical to the main tracker's
+     makeRoiDrawer -- draw new / drag to move / drag corners to resize) ================= */
+  function makeRoiDrawer(overlayCanvas, displayEl, getNatural, onSet) {
+    const HANDLE_PX = 9, MIN_SIZE = 10;
+    let mode = "idle";
+    let dragStart = null, dragCurrent = null, roi = null, moveOrigin = null, resizeHandle = null;
+
+    function scale() {
+      const rect = displayEl.getBoundingClientRect();
+      const { w, h } = getNatural();
+      return { sx: w / (rect.width || 1), sy: h / (rect.height || 1) };
+    }
+    function resize() {
+      const rect = displayEl.getBoundingClientRect();
+      overlayCanvas.width = rect.width; overlayCanvas.height = rect.height;
+      redraw();
+    }
+    function displayRoi() {
+      if (!roi) return null;
+      const { sx, sy } = scale();
+      return { x: roi.x / sx, y: roi.y / sy, w: roi.w / sx, h: roi.h / sy };
+    }
+    function hitTest(px, py) {
+      const dr = displayRoi();
+      if (!dr) return null;
+      const near = (a, b) => Math.abs(a - b) <= HANDLE_PX;
+      const corners = { nw: [dr.x, dr.y], ne: [dr.x + dr.w, dr.y], sw: [dr.x, dr.y + dr.h], se: [dr.x + dr.w, dr.y + dr.h] };
+      for (const name in corners) {
+        const [cx, cy] = corners[name];
+        if (near(px, cx) && near(py, cy)) return { type: "resize", handle: name };
+      }
+      if (px >= dr.x && px <= dr.x + dr.w && py >= dr.y && py <= dr.y + dr.h) return { type: "move" };
+      return null;
+    }
+    function cursorFor(hit) {
+      if (!hit) return "crosshair";
+      if (hit.type === "move") return "move";
+      return hit.handle === "nw" || hit.handle === "se" ? "nwse-resize" : "nesw-resize";
+    }
+    function redraw(dragPreview) {
+      const ctx = overlayCanvas.getContext("2d");
+      ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      const dr = displayRoi();
+      if (dr) {
+        ctx.lineWidth = 2; ctx.strokeStyle = "#4fb0ff"; ctx.strokeRect(dr.x, dr.y, dr.w, dr.h);
+        ctx.fillStyle = "#4fb0ff";
+        const hs = 5;
+        for (const [cx, cy] of [[dr.x, dr.y], [dr.x + dr.w, dr.y], [dr.x, dr.y + dr.h], [dr.x + dr.w, dr.y + dr.h]]) {
+          ctx.fillRect(cx - hs, cy - hs, hs * 2, hs * 2);
+        }
+      }
+      if (dragPreview && dragStart && dragCurrent) {
+        const a = dragStart, b = dragCurrent;
+        ctx.strokeStyle = "#38d39f"; ctx.setLineDash([5, 4]);
+        ctx.strokeRect(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+        ctx.setLineDash([]);
+      }
+    }
+    function clampRoi(x, y, w, h) {
+      const { w: natW, h: natH } = getNatural();
+      x = Math.max(0, x); y = Math.max(0, y);
+      w = Math.max(MIN_SIZE, Math.min(w, natW - x));
+      h = Math.max(MIN_SIZE, Math.min(h, natH - y));
+      return { x, y, w, h };
+    }
+    overlayCanvas.addEventListener("mousedown", (e) => {
+      const rect = overlayCanvas.getBoundingClientRect();
+      const px = e.clientX - rect.left, py = e.clientY - rect.top;
+      if (mode === "armed") { mode = "creating"; dragStart = { x: px, y: py }; dragCurrent = dragStart; return; }
+      const hit = hitTest(px, py);
+      if (hit && hit.type === "move") { mode = "moving"; dragStart = { x: px, y: py }; moveOrigin = { x: roi.x, y: roi.y }; }
+      else if (hit && hit.type === "resize") { mode = "resizing"; resizeHandle = hit.handle; dragStart = { x: px, y: py }; moveOrigin = { ...roi }; }
+    });
+    overlayCanvas.addEventListener("mousemove", (e) => {
+      const rect = overlayCanvas.getBoundingClientRect();
+      const px = e.clientX - rect.left, py = e.clientY - rect.top;
+      if (mode === "idle") { overlayCanvas.style.cursor = cursorFor(hitTest(px, py)); return; }
+      if (mode === "creating") { dragCurrent = { x: px, y: py }; redraw(true); return; }
+      const { sx, sy } = scale();
+      const dxN = (px - dragStart.x) * sx, dyN = (py - dragStart.y) * sy;
+      if (mode === "moving") { roi = clampRoi(moveOrigin.x + dxN, moveOrigin.y + dyN, roi.w, roi.h); redraw(); }
+      else if (mode === "resizing") {
+        let { x, y, w, h } = moveOrigin;
+        if (resizeHandle === "nw") { x += dxN; y += dyN; w -= dxN; h -= dyN; }
+        else if (resizeHandle === "ne") { y += dyN; w += dxN; h -= dyN; }
+        else if (resizeHandle === "sw") { x += dxN; w -= dxN; h += dyN; }
+        else if (resizeHandle === "se") { w += dxN; h += dyN; }
+        roi = clampRoi(x, y, w, h); redraw();
+      }
+    });
+    window.addEventListener("mouseup", () => {
+      if (mode === "creating" && dragStart) {
+        const a = dragStart, b = dragCurrent || dragStart;
+        const x0 = Math.min(a.x, b.x), y0 = Math.min(a.y, b.y);
+        const ww = Math.abs(b.x - a.x), hh = Math.abs(b.y - a.y);
+        if (ww >= 5 && hh >= 5) {
+          const { sx, sy } = scale();
+          roi = clampRoi(Math.round(x0 * sx), Math.round(y0 * sy), Math.round(ww * sx), Math.round(hh * sy));
+          redraw();
+          if (onSet) onSet(roi);
+        } else redraw();
+      } else if ((mode === "moving" || mode === "resizing") && onSet) { onSet(roi); }
+      mode = "idle"; dragStart = null; dragCurrent = null; resizeHandle = null;
+    });
+    return {
+      startDrawing() { mode = "armed"; },
+      clear() { roi = null; mode = "idle"; redraw(); },
+      setRoi(r) { roi = r; redraw(); },
+      getRoi() { return roi; },
+      resize, redraw,
+    };
+  }
+
+  const videoDrawer = makeRoiDrawer(els.overlay, els.video, () => ({ w: state.naturalW, h: state.naturalH }), (roi) => {
+    state.roi = roi;
+    els.btnClearRoi.disabled = false;
+    els.btnCapture.disabled = false;
+    els.btnExportCalibration.disabled = false;
+    els.roiBadge.textContent = "set";
+    els.roiBadge.className = "badge roi-set";
+    setStatus(`ROI set: ${roi.w}x${roi.h} px at (${roi.x},${roi.y}). Capture frames when ready.`, "ok");
+  });
+
+  els.fileInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    els.video.src = URL.createObjectURL(file);
+    state.videoFileName = file.name;
+    state.videoLoaded = false;
+    state.roi = null;
+    state.capturedFrames = [];
+    state.pointsByFrame = new Map();
+    state.savedFrames = [];
+    els.framePanel.style.display = "none";
+    els.frameStatsPanel.style.display = "none";
+    els.aggPanel.style.display = "none";
+    videoDrawer.clear();
+    els.roiBadge.textContent = "not set"; els.roiBadge.className = "badge roi-unset";
+    els.btnCapture.disabled = true; els.btnDrawRoi.disabled = true; els.btnClearRoi.disabled = true;
+    els.loadRoiInput.disabled = true; els.loadRoiLabel.style.opacity = ".4";
+    setStatus("Loading video metadata…");
+  });
+
+  els.video.addEventListener("loadedmetadata", () => {
+    state.naturalW = els.video.videoWidth;
+    state.naturalH = els.video.videoHeight;
+    state.videoLoaded = true;
+    videoDrawer.resize();
+    els.btnDrawRoi.disabled = false;
+    els.loadRoiInput.disabled = false; els.loadRoiLabel.style.opacity = "1";
+    setStatus(`Video loaded: ${state.naturalW}x${state.naturalH}. Draw or load a ROI, then capture frames.`, "ok");
+  });
+  window.addEventListener("resize", () => { if (state.videoLoaded) videoDrawer.resize(); });
+
+  els.btnDrawRoi.addEventListener("click", () => { videoDrawer.startDrawing(); setStatus("Click and drag on the video frame to draw the ROI."); });
+  els.btnClearRoi.addEventListener("click", () => {
+    videoDrawer.clear(); state.roi = null;
+    els.btnClearRoi.disabled = true; els.btnCapture.disabled = true; els.btnExportCalibration.disabled = true;
+    els.roiBadge.textContent = "not set"; els.roiBadge.className = "badge roi-unset";
+  });
+  els.loadRoiInput.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const payload = JSON.parse(await file.text());
+      if (!payload.roi || [payload.roi.rx, payload.roi.ry, payload.roi.rw, payload.roi.rh].some((v) => typeof v !== "number")) {
+        throw new Error("File doesn't look like a valid ROI template.");
+      }
+      if (!state.videoLoaded) throw new Error("Load a video first.");
+      const n = payload.roi;
+      const roi = {
+        x: Math.round(n.rx * state.naturalW), y: Math.round(n.ry * state.naturalH),
+        w: Math.round(n.rw * state.naturalW), h: Math.round(n.rh * state.naturalH),
+      };
+      state.roi = roi;
+      videoDrawer.setRoi(roi);
+      els.btnClearRoi.disabled = false; els.btnCapture.disabled = false; els.btnExportCalibration.disabled = false;
+      els.roiBadge.textContent = "from file"; els.roiBadge.className = "badge roi-set";
+      // Combined calibration files (from "Export calibration" below) carry both roi and
+      // detectionParams -- apply the params too if present, so either loader button works
+      // for a combined file, matching the main tracker's loaders.
+      const p = payload.detectionParams;
+      let statusMsg = `ROI applied from file: ${roi.w}x${roi.h} px at (${roi.x},${roi.y}).`;
+      if (p && typeof p.thresh_k === "number" && typeof p.floor === "number") {
+        state.detParams = {
+          thresh_k: p.thresh_k, floor: p.floor, minR: p.minR != null ? p.minR : state.detParams.minR,
+          maxR: p.maxR != null ? p.maxR : state.detParams.maxR, win: p.win || state.detParams.win,
+          glareBuffer: p.glareBuffer != null ? p.glareBuffer : state.detParams.glareBuffer,
+        };
+        els.sldSensitivity.value = state.detParams.thresh_k; els.sldFloor.value = state.detParams.floor;
+        els.sldMinR.value = state.detParams.minR; els.sldMaxR.value = state.detParams.maxR; els.sldGlareBuffer.value = state.detParams.glareBuffer;
+        statusMsg = `ROI + detection settings applied from calibration file: ${roi.w}x${roi.h} px at (${roi.x},${roi.y}).`;
+      }
+      setStatus(statusMsg, "ok");
+    } catch (err) {
+      setStatus("Could not load ROI file: " + err.message, "err");
+    }
+  });
+
+  /* ================= detection settings ================= */
+  function currentDetOpts() {
+    const p = state.detParams;
+    return { thresh_k: p.thresh_k, floor: p.floor, win: p.win, minArea: Math.PI * p.minR * p.minR, maxArea: Math.PI * p.maxR * p.maxR };
+  }
+  [els.sldSensitivity, els.sldFloor, els.sldMinR, els.sldMaxR, els.sldGlareBuffer].forEach((s) => s.addEventListener("input", () => {
+    state.detParams.thresh_k = parseFloat(els.sldSensitivity.value);
+    state.detParams.floor = parseFloat(els.sldFloor.value);
+    state.detParams.minR = parseFloat(els.sldMinR.value);
+    state.detParams.maxR = parseFloat(els.sldMaxR.value);
+    state.detParams.glareBuffer = parseFloat(els.sldGlareBuffer.value);
+    renderFrame();
+  }));
+  els.loadParamsInput.addEventListener("change", async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    try {
+      const payload = JSON.parse(await file.text());
+      const p = payload.detectionParams || payload; // accept a full report.json or a bare params object
+      if (typeof p.thresh_k !== "number" || typeof p.floor !== "number") throw new Error("No recognizable detection settings in that file.");
+      state.detParams = {
+        thresh_k: p.thresh_k, floor: p.floor, minR: p.minR, maxR: p.maxR, win: p.win || 41,
+        glareBuffer: p.glareBuffer != null ? p.glareBuffer : state.detParams.glareBuffer,
+      };
+      els.sldSensitivity.value = p.thresh_k; els.sldFloor.value = p.floor; els.sldMinR.value = p.minR; els.sldMaxR.value = p.maxR;
+      els.sldGlareBuffer.value = state.detParams.glareBuffer;
+      // Combined calibration files also carry a roi -- apply it too if present and a video is
+      // already loaded, so either loader button works for a combined file.
+      let statusMsg = "Detection settings loaded from file -- validation will now use these exact parameters.";
+      const roiN = payload.roi;
+      if (state.videoLoaded && roiN && [roiN.rx, roiN.ry, roiN.rw, roiN.rh].every((v) => typeof v === "number")) {
+        const roi = {
+          x: Math.round(roiN.rx * state.naturalW), y: Math.round(roiN.ry * state.naturalH),
+          w: Math.round(roiN.rw * state.naturalW), h: Math.round(roiN.rh * state.naturalH),
+        };
+        state.roi = roi;
+        videoDrawer.setRoi(roi);
+        els.btnClearRoi.disabled = false; els.btnCapture.disabled = false; els.btnExportCalibration.disabled = false;
+        els.roiBadge.textContent = "from file"; els.roiBadge.className = "badge roi-set";
+        statusMsg = "ROI + detection settings applied from calibration file.";
+      }
+      setStatus(statusMsg, "ok");
+      renderFrame();
+    } catch (err) {
+      setStatus("Could not load detection settings: " + err.message, "err");
+    }
+  });
+
+  /* ================= capture frames (identical approach to the main tracker) ================= */
+  async function captureFrames(onProgress) {
+    const video = els.video;
+    const w = state.naturalW, h = state.naturalH;
+    const cap = document.createElement("canvas");
+    cap.width = w; cap.height = h;
+    const capCtx = cap.getContext("2d", { willReadFrequently: true });
+    const frames = [];
+    video.pause();
+    video.currentTime = 0;
+    await new Promise((res) => { video.onseeked = res; });
+    return new Promise((resolve, reject) => {
+      let lastT = -1;
+      function grab() {
+        try {
+          if (video.currentTime !== lastT || frames.length === 0) {
+            capCtx.drawImage(video, 0, 0, w, h);
+            const imgData = capCtx.getImageData(0, 0, w, h).data;
+            const gray = new Float32Array(w * h);
+            for (let i = 0, p = 0; i < gray.length; i++, p += 4) {
+              gray[i] = 0.299 * imgData[p] + 0.587 * imgData[p + 1] + 0.114 * imgData[p + 2];
+            }
+            frames.push({ t: video.currentTime, gray });
+            lastT = video.currentTime;
+            if (onProgress) onProgress(video.currentTime, video.duration);
+          }
+        } catch (err) { reject(err); return; }
+        if (video.ended || video.currentTime >= video.duration - 1e-3) resolve(frames);
+        else (video.requestVideoFrameCallback ? video.requestVideoFrameCallback(grab) : requestAnimationFrame(grab));
+      }
+      video.onended = () => resolve(frames);
+      video.play().then(() => {
+        (video.requestVideoFrameCallback ? video.requestVideoFrameCallback(grab) : requestAnimationFrame(grab));
+      }).catch(reject);
+    });
+  }
+  function buildRoiMask(w, h, roi) {
+    const mask = new Uint8Array(w * h);
+    for (let y = roi.y; y < roi.y + roi.h; y++) for (let x = roi.x; x < roi.x + roi.w; x++) mask[y * w + x] = 1;
+    return mask;
+  }
+
+  els.btnCapture.addEventListener("click", async () => {
+    if (!state.roi) return;
+    els.btnCapture.disabled = true;
+    try {
+      els.captureStatus.textContent = "Capturing frames from video…";
+      const frames = await captureFrames((t, dur) => {
+        els.captureStatus.textContent = `Capturing… ${t.toFixed(2)}s / ${(dur || 0).toFixed(2)}s`;
+      });
+      if (frames.length < 1) throw new Error("No frames captured.");
+      state.capturedFrames = frames;
+      const dts = [];
+      for (let i = 1; i < frames.length; i++) dts.push(frames[i].t - frames[i - 1].t);
+      const medianDt = PTLib.median(dts.filter((d) => d > 0)) || (1 / 7);
+      state.fps = 1 / medianDt;
+      state.frameIdx = Math.floor(frames.length / 2);
+      els.captureStatus.textContent = `Captured ${frames.length} frames (~${state.fps.toFixed(1)} fps). Pick frames spread across the recording and mark particles on each.`;
+      els.paramsPanel.style.display = "block";
+      els.framePanel.style.display = "block";
+      renderFrame();
+    } catch (err) {
+      console.error(err);
+      els.captureStatus.textContent = "Error: " + (err.message || err);
+    } finally {
+      els.btnCapture.disabled = false;
+    }
+  });
+
+  /* ================= per-frame annotation ================= */
+  function currentPoints() {
+    if (!state.pointsByFrame.has(state.frameIdx)) state.pointsByFrame.set(state.frameIdx, []);
+    return state.pointsByFrame.get(state.frameIdx);
+  }
+  function excludeGlare(gimg, mask, w, h) {
+    const bufferPx = state.detParams.glareBuffer;
+    if (bufferPx == null || bufferPx <= 0) return mask;
+    const { mask: glare } = PTLib.fixationLightMask(gimg, mask, { bufferPx });
+    const out = new Uint8Array(w * h);
+    for (let i = 0; i < out.length; i++) out[i] = mask[i] && !glare[i];
+    return out;
+  }
+  function detectOnCurrentFrame() {
+    const frames = state.capturedFrames;
+    const w = state.naturalW, h = state.naturalH;
+    const gimg = { width: w, height: h, data: frames[state.frameIdx].gray };
+    const mask = excludeGlare(gimg, buildRoiMask(w, h, state.roi), w, h);
+    const dog = PTLib.bandpass(gimg, 1.0, 6.0);
+    const dets = PTLib.detectParticles(dog, mask, currentDetOpts());
+    // Give each automated detection a size estimate on the same FWHM
+    // convention used for manual marks (see estimateParticleExtent) -- its
+    // *native* `radius` comes from a strict statistical threshold meant for
+    // deciding whether something is a particle at all, not for measuring
+    // size, so comparing it directly to a manual mark's size would be
+    // comparing two different rulers.
+    for (const d of dets) {
+      const ext = PTLib.estimateParticleExtent(dog, d.x, d.y);
+      d.fwhmRadius = ext.radius;
+      d.majorR = ext.majorR; d.minorR = ext.minorR; d.orientationRad = ext.orientationRad; d.elongation = ext.elongation;
+    }
+    state.lastDog = dog;
+    return dets;
+  }
+  // Greedy nearest-neighbor matching between manual points and automated
+  // detections within `tolerance` px -- mirrors the main tracker's linkTracks
+  // approach (sort all candidate pairs by distance, take greedily).
+  function matchPoints(manual, auto, tolerance) {
+    const pairs = [];
+    for (let i = 0; i < manual.length; i++) {
+      for (let j = 0; j < auto.length; j++) {
+        const d = Math.hypot(manual[i].x - auto[j].x, manual[i].y - auto[j].y);
+        if (d <= tolerance) pairs.push([d, i, j]);
+      }
+    }
+    pairs.sort((a, b) => a[0] - b[0]);
+    const usedM = new Set(), usedA = new Set(), matches = [];
+    for (const [d, i, j] of pairs) {
+      if (usedM.has(i) || usedA.has(j)) continue;
+      usedM.add(i); usedA.add(j); matches.push({ manual: manual[i], auto: auto[j], dist: d });
+    }
+    const unmatchedManual = manual.filter((_, i) => !usedM.has(i));
+    const unmatchedAuto = auto.filter((_, j) => !usedA.has(j));
+    return { matches, unmatchedManual, unmatchedAuto };
+  }
+
+  function backgroundView(gimg, mode) {
+    if (mode === "enhanced") return PTLib.particleEnhancedView(gimg, 1.0, 6.0);
+    if (mode === "raw") return { width: gimg.width, height: gimg.height, data: gimg.data };
+    return PTLib.contrastStretch(gimg, 0.01, 0.995); // "bright"
+  }
+
+  // Real particles aren't always round -- fast-moving ones blur into small streaks within a
+  // single frame's exposure. Drawing majorR/minorR/orientation as an ellipse (instead of always
+  // forcing a circle) makes that visible at a glance: a streak-shaped mark clearly looks like a
+  // streak, rather than being flattened into a misleadingly "average-sized" circle.
+  function strokeParticleShape(ctx, x, y, p, fallbackRadiusField) {
+    ctx.beginPath();
+    if (p.majorR != null && p.minorR != null) {
+      ctx.ellipse(x, y, Math.max(1, p.majorR), Math.max(1, p.minorR), p.orientationRad || 0, 0, 2 * Math.PI);
+    } else {
+      ctx.arc(x, y, Math.max(2, p[fallbackRadiusField] || 2), 0, 2 * Math.PI);
+    }
+    ctx.stroke();
+  }
+  function renderFrame() {
+    const frames = state.capturedFrames;
+    if (!frames.length || !state.roi) return;
+    const w = state.naturalW, h = state.naturalH;
+    const gimg = { width: w, height: h, data: frames[state.frameIdx].gray };
+    const bg = backgroundView(gimg, els.valViewMode.value);
+    const canvas = els.annotateCanvas;
+    canvas.width = w; canvas.height = h;
+    const zoom = parseFloat(els.zoomSlider.value) || 1;
+    canvas.style.width = (zoom * 100) + "%";
+    canvas.style.height = "auto";
+    const ctx = canvas.getContext("2d");
+    const imgData = ctx.createImageData(w, h);
+    for (let i = 0; i < w * h; i++) {
+      const v = bg.data[i];
+      imgData.data[i * 4] = v; imgData.data[i * 4 + 1] = v; imgData.data[i * 4 + 2] = v; imgData.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    ctx.strokeStyle = "#4fb0ff"; ctx.lineWidth = 2;
+    ctx.strokeRect(state.roi.x, state.roi.y, state.roi.w, state.roi.h);
+
+    const hideAuto = els.hideAutoOverlay.checked;
+    const auto = detectOnCurrentFrame();
+    const manual = currentPoints();
+    const tolerance = parseFloat(els.matchTolerance.value) || 8;
+    const { matches, unmatchedManual, unmatchedAuto } = matchPoints(manual, auto, tolerance);
+
+    // Manual marks are drawn as a small center dot (exact clicked/snapped
+    // position) plus a thin outline circle at their region-grown size, using
+    // the same FWHM convention as the automated circles below -- so the two
+    // are visually comparable, instead of manual marks always looking like
+    // uniform fixed-size dots regardless of the particle's real size.
+    if (hideAuto) {
+      // Blind mode: show only your own marks, uncolored by agreement, so
+      // marking isn't anchored on what the detector already flagged.
+      for (const m of manual) {
+        ctx.strokeStyle = "#4fb0ff"; ctx.lineWidth = 1.5;
+        strokeParticleShape(ctx, m.x, m.y, m, "radius");
+        ctx.fillStyle = "#4fb0ff"; ctx.beginPath(); ctx.arc(m.x, m.y, 1.5, 0, 2 * Math.PI); ctx.fill();
+      }
+    } else {
+      for (const { auto: a } of matches) {
+        ctx.strokeStyle = "#38d39f"; ctx.lineWidth = 2;
+        strokeParticleShape(ctx, a.x, a.y, a, "fwhmRadius");
+      }
+      for (const a of unmatchedAuto) {
+        ctx.strokeStyle = "#ffb454"; ctx.lineWidth = 2;
+        strokeParticleShape(ctx, a.x, a.y, a, "fwhmRadius");
+      }
+      for (const { manual: m } of matches) {
+        ctx.strokeStyle = "#38d39f"; ctx.lineWidth = 1.5;
+        strokeParticleShape(ctx, m.x, m.y, m, "radius");
+        ctx.fillStyle = "#38d39f"; ctx.beginPath(); ctx.arc(m.x, m.y, 1.5, 0, 2 * Math.PI); ctx.fill();
+      }
+      for (const m of unmatchedManual) {
+        ctx.strokeStyle = "#ff6b6b"; ctx.lineWidth = 1.5;
+        strokeParticleShape(ctx, m.x, m.y, m, "radius");
+        ctx.fillStyle = "#ff6b6b"; ctx.beginPath(); ctx.arc(m.x, m.y, 1.5, 0, 2 * Math.PI); ctx.fill();
+      }
+    }
+
+    els.frameLabel.textContent = `frame ${state.frameIdx + 1}/${frames.length}`;
+
+    const tp = matches.length, fn = unmatchedManual.length, fp = unmatchedAuto.length;
+    const precision = tp + fp > 0 ? tp / (tp + fp) : null;
+    const recall = tp + fn > 0 ? tp / (tp + fn) : null;
+    const meanPosErr = matches.length ? matches.reduce((a, m) => a + m.dist, 0) / matches.length : null;
+    const sizeErrs = matches.map((m) => Math.abs((m.manual.radius || 0) - (m.auto.fwhmRadius || 0)));
+    const meanSizeErr = sizeErrs.length ? sizeErrs.reduce((a, b) => a + b, 0) / sizeErrs.length : null;
+    els.frameStatsPanel.style.display = hideAuto ? "none" : "block";
+    els.statTP.textContent = tp; els.statFN.textContent = fn; els.statFP.textContent = fp;
+    els.statPosErr.textContent = meanPosErr != null ? fmtNum(meanPosErr, 2) + " px" : "–";
+    els.statPrecision.textContent = precision != null ? fmtNum(precision * 100, 1) + "%" : "–";
+    els.statRecall.textContent = recall != null ? fmtNum(recall * 100, 1) + "%" : "–";
+    if (els.statSizeErr) els.statSizeErr.textContent = meanSizeErr != null ? fmtNum(meanSizeErr, 2) + " px" : "–";
+    // Elongation of 99 is a sentinel for degenerate 1-2px blobs (quantization noise, not a real
+    // streak measurement), so exclude those from the average -- otherwise a couple of tiny
+    // specks would swamp a mean that's meant to describe genuine motion-blur shape.
+    const elongations = auto.map((a) => a.elongation).filter((e) => e != null && e < 50);
+    const meanElongation = elongations.length ? elongations.reduce((a, b) => a + b, 0) / elongations.length : null;
+    if (els.statElongation) els.statElongation.textContent = meanElongation != null ? fmtNum(meanElongation, 2) + "x" : "–";
+
+    return { tp, fn, fp, precision, recall, meanPosErr, meanSizeErr, sizeErrs, meanElongation, elongations, matches, unmatchedManual, unmatchedAuto, auto, manual };
+  }
+
+  function naturalClickCoords(e) {
+    const rect = els.annotateCanvas.getBoundingClientRect();
+    const sx = state.naturalW / rect.width, sy = state.naturalH / rect.height;
+    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy };
+  }
+  els.annotateCanvas.addEventListener("click", (e) => {
+    if (!state.capturedFrames.length) return;
+    const { x, y } = naturalClickCoords(e);
+    // Region-grow from the click to estimate the actual particle's size (see
+    // PTLib.estimateParticleExtent) -- a bare click has no size, and without
+    // this every manual mark would implicitly be the same (zero) size, which
+    // would make particle-size validation meaningless.
+    const est = state.lastDog ? PTLib.estimateParticleExtent(state.lastDog, x, y) : null;
+    const point = est && !est.degenerate
+      ? { x: est.x, y: est.y, radius: est.radius, rawClickX: x, rawClickY: y, majorR: est.majorR, minorR: est.minorR, orientationRad: est.orientationRad, elongation: est.elongation }
+      : { x, y, radius: 1, rawClickX: x, rawClickY: y, majorR: 1, minorR: 1, orientationRad: 0, elongation: 1 };
+    currentPoints().push(point);
+    renderFrame();
+  });
+  els.annotateCanvas.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (!state.capturedFrames.length) return;
+    const { x, y } = naturalClickCoords(e);
+    const pts = currentPoints();
+    let bestI = -1, bestD = Infinity;
+    pts.forEach((p, i) => { const d = Math.hypot(p.x - x, p.y - y); if (d < bestD) { bestD = d; bestI = i; } });
+    if (bestI >= 0 && bestD <= 20) pts.splice(bestI, 1);
+    renderFrame();
+  });
+  /* ================= representative-frame sampling ================= */
+  // Picks frames spread across the recording's own open-eye segments (early/
+  // mid/late within each) rather than consecutive frames, which would mostly
+  // show the same instant -- ten frames spanning 0.3s at 32fps tell you far
+  // less than a handful of frames spread across the whole clip's actual
+  // range of conditions (different points in the blink cycle, drift, etc).
+  function evenlySpacedIndices(lo, hi, k) {
+    if (k <= 0) return [];
+    if (lo >= hi || k === 1) return [Math.round((lo + hi) / 2)];
+    const out = [];
+    for (let i = 0; i < k; i++) out.push(Math.round(lo + (i / (k - 1)) * (hi - lo)));
+    return [...new Set(out)];
+  }
+  function detectEpochsForSampling() {
+    const frames = state.capturedFrames;
+    const w = state.naturalW, h = state.naturalH;
+    const gray = frames.map((f) => f.gray);
+    const signal = PTLib.computeFrameSignal(gray, w, h, state.roi, 235);
+    const blinks = PTLib.detectBlinks(signal, { padFrames: 1, zThresh: 4.0 });
+    return PTLib.segmentEpochs(frames.length, blinks, 5);
+  }
+  function suggestSampleFrames(nTarget) {
+    const frames = state.capturedFrames;
+    let epochs = detectEpochsForSampling();
+    if (!epochs.length) return evenlySpacedIndices(0, frames.length - 1, nTarget);
+    if (epochs.length > nTarget) {
+      epochs = epochs.slice().sort((a, b) => (b.end - b.start) - (a.end - a.start)).slice(0, nTarget)
+        .sort((a, b) => a.start - b.start);
+    }
+    const totalLen = epochs.reduce((a, e) => a + (e.end - e.start), 0) || 1;
+    const remaining = Math.max(0, nTarget - epochs.length);
+    const weights = epochs.map((e) => (e.end - e.start) / totalLen);
+    const raw = weights.map((wgt) => wgt * remaining);
+    const base = raw.map(Math.floor);
+    let used = base.reduce((a, b) => a + b, 0);
+    const fracIdx = raw.map((v, i) => [v - base[i], i]).sort((a, b) => b[0] - a[0]);
+    let fi = 0;
+    while (used < remaining && fi < fracIdx.length) { base[fracIdx[fi][1]]++; used++; fi++; }
+    const indices = [];
+    epochs.forEach((e, i) => indices.push(...evenlySpacedIndices(e.start, e.end - 1, 1 + base[i])));
+    return [...new Set(indices)].sort((a, b) => a - b);
+  }
+  els.btnSuggestFrames.addEventListener("click", () => {
+    if (!state.capturedFrames.length) return;
+    const n = Math.max(2, parseInt(els.sampleCount.value, 10) || 6);
+    state.suggestedFrames = suggestSampleFrames(n);
+    state.sampleIdx = 0;
+    els.sampleNavRow.style.display = state.suggestedFrames.length ? "flex" : "none";
+    if (state.suggestedFrames.length) {
+      state.frameIdx = state.suggestedFrames[0];
+      renderFrame();
+    }
+    updateSampleLabel();
+    setStatus(`Suggested ${state.suggestedFrames.length} representative frame(s) spread across the recording's open-eye segments.`, "ok");
+  });
+  function updateSampleLabel() {
+    if (!state.suggestedFrames.length) return;
+    els.sampleLabel.textContent = `suggested ${state.sampleIdx + 1}/${state.suggestedFrames.length} (frame ${state.suggestedFrames[state.sampleIdx] + 1})`;
+  }
+  els.btnPrevSample.addEventListener("click", () => {
+    if (!state.suggestedFrames.length) return;
+    state.sampleIdx = Math.max(0, state.sampleIdx - 1);
+    state.frameIdx = state.suggestedFrames[state.sampleIdx];
+    updateSampleLabel();
+    renderFrame();
+  });
+  els.btnNextSample.addEventListener("click", () => {
+    if (!state.suggestedFrames.length) return;
+    state.sampleIdx = Math.min(state.suggestedFrames.length - 1, state.sampleIdx + 1);
+    state.frameIdx = state.suggestedFrames[state.sampleIdx];
+    updateSampleLabel();
+    renderFrame();
+  });
+
+  els.btnUndoPoint.addEventListener("click", () => { currentPoints().pop(); renderFrame(); });
+  els.btnClearPoints.addEventListener("click", () => { state.pointsByFrame.set(state.frameIdx, []); renderFrame(); });
+  els.btnPrevFrame.addEventListener("click", () => { state.frameIdx = Math.max(0, state.frameIdx - 1); renderFrame(); });
+  els.btnNextFrame.addEventListener("click", () => { state.frameIdx = Math.min(state.capturedFrames.length - 1, state.frameIdx + 1); renderFrame(); });
+  els.matchTolerance.addEventListener("input", renderFrame);
+  els.valViewMode.addEventListener("change", renderFrame);
+  els.zoomSlider.addEventListener("input", renderFrame);
+  els.hideAutoOverlay.addEventListener("change", renderFrame);
+
+  /* ================= save frame comparison + aggregate ================= */
+  function renderAggregate() {
+    const rows = state.savedFrames;
+    els.aggPanel.style.display = rows.length ? "block" : "none";
+    els.tunePanel.style.display = rows.length ? "block" : "none";
+    if (!rows.length) return;
+    const totals = rows.reduce((a, r) => ({
+      tp: a.tp + r.tp, fn: a.fn + r.fn, fp: a.fp + r.fp,
+      dists: a.dists.concat(r.matchedDists), sizeErrs: a.sizeErrs.concat(r.sizeErrs || []),
+      elongations: a.elongations.concat(r.elongations || []),
+    }), { tp: 0, fn: 0, fp: 0, dists: [], sizeErrs: [], elongations: [] });
+    const precision = totals.tp + totals.fp > 0 ? totals.tp / (totals.tp + totals.fp) : null;
+    const recall = totals.tp + totals.fn > 0 ? totals.tp / (totals.tp + totals.fn) : null;
+    const f1 = precision != null && recall != null && (precision + recall) > 0 ? (2 * precision * recall) / (precision + recall) : null;
+    const meanPosErr = totals.dists.length ? totals.dists.reduce((a, b) => a + b, 0) / totals.dists.length : null;
+    const meanSizeErr = totals.sizeErrs.length ? totals.sizeErrs.reduce((a, b) => a + b, 0) / totals.sizeErrs.length : null;
+    const meanElongation = totals.elongations.length ? totals.elongations.reduce((a, b) => a + b, 0) / totals.elongations.length : null;
+    els.aggPrecision.textContent = precision != null ? fmtNum(precision * 100, 1) + "%" : "–";
+    els.aggRecall.textContent = recall != null ? fmtNum(recall * 100, 1) + "%" : "–";
+    els.aggF1.textContent = f1 != null ? fmtNum(f1 * 100, 1) + "%" : "–";
+    els.aggPosErr.textContent = meanPosErr != null ? fmtNum(meanPosErr, 2) : "–";
+    els.aggSizeErr.textContent = meanSizeErr != null ? fmtNum(meanSizeErr, 2) : "–";
+    if (els.aggElongation) els.aggElongation.textContent = meanElongation != null ? fmtNum(meanElongation, 2) + "x" : "–";
+
+    let html = "<tr><th>Frame</th><th>Matched</th><th>Missed (FN)</th><th>False pos.</th><th>Precision</th><th>Recall</th><th>Mean pos. err (px)</th><th>Mean size err (px)</th></tr>";
+    rows.forEach((r) => {
+      html += `<tr><td>#${r.frameIdx + 1}</td><td>${r.tp}</td><td>${r.fn}</td><td>${r.fp}</td>` +
+        `<td>${r.precision != null ? fmtNum(r.precision * 100, 1) + "%" : "–"}</td><td>${r.recall != null ? fmtNum(r.recall * 100, 1) + "%" : "–"}</td>` +
+        `<td>${r.meanPosErr != null ? fmtNum(r.meanPosErr, 2) : "–"}</td><td>${r.meanSizeErr != null ? fmtNum(r.meanSizeErr, 2) : "–"}</td></tr>`;
+    });
+    els.aggTable.innerHTML = html;
+    els.btnExportValidation.disabled = false;
+    els.btnRemoveLastFrame.disabled = false;
+  }
+
+  els.btnSaveFrame.addEventListener("click", () => {
+    const result = renderFrame();
+    if (!result) return;
+    const existingIdx = state.savedFrames.findIndex((r) => r.frameIdx === state.frameIdx);
+    const record = {
+      frameIdx: state.frameIdx, time_s: state.capturedFrames[state.frameIdx].t,
+      tp: result.tp, fn: result.fn, fp: result.fp, precision: result.precision, recall: result.recall,
+      meanPosErr: result.meanPosErr, matchedDists: result.matches.map((m) => m.dist),
+      meanSizeErr: result.meanSizeErr, sizeErrs: result.sizeErrs,
+      meanElongation: result.meanElongation, elongations: result.elongations,
+      manualPoints: result.manual, autoDetections: result.auto.map((a) => ({
+        x: a.x, y: a.y, radius: a.radius, fwhmRadius: a.fwhmRadius,
+        majorR: a.majorR, minorR: a.minorR, orientationRad: a.orientationRad, elongation: a.elongation,
+      })),
+    };
+    if (existingIdx >= 0) state.savedFrames[existingIdx] = record; else state.savedFrames.push(record);
+    state.savedFrames.sort((a, b) => a.frameIdx - b.frameIdx);
+    renderAggregate();
+    setStatus(`Saved frame ${state.frameIdx + 1}. ${state.savedFrames.length} frame(s) in the aggregate so far.`, "ok");
+  });
+  els.btnRemoveLastFrame.addEventListener("click", () => {
+    state.savedFrames.pop();
+    renderAggregate();
+  });
+
+  els.btnExportValidation.addEventListener("click", () => {
+    const report = {
+      generatedAt: new Date().toISOString(),
+      videoFileName: state.videoFileName || null,
+      roi: state.roi,
+      detectionParams: state.detParams,
+      matchTolerance_px: parseFloat(els.matchTolerance.value) || 8,
+      perFrame: state.savedFrames,
+      aggregate: (() => {
+        const totals = state.savedFrames.reduce((a, r) => ({
+          tp: a.tp + r.tp, fn: a.fn + r.fn, fp: a.fp + r.fp,
+          dists: a.dists.concat(r.matchedDists), sizeErrs: a.sizeErrs.concat(r.sizeErrs || []),
+          elongations: a.elongations.concat(r.elongations || []),
+        }), { tp: 0, fn: 0, fp: 0, dists: [], sizeErrs: [], elongations: [] });
+        const precision = totals.tp + totals.fp > 0 ? totals.tp / (totals.tp + totals.fp) : null;
+        const recall = totals.tp + totals.fn > 0 ? totals.tp / (totals.tp + totals.fn) : null;
+        const f1 = precision != null && recall != null && (precision + recall) > 0 ? (2 * precision * recall) / (precision + recall) : null;
+        const meanPosErr = totals.dists.length ? totals.dists.reduce((a, b) => a + b, 0) / totals.dists.length : null;
+        const meanSizeErr = totals.sizeErrs.length ? totals.sizeErrs.reduce((a, b) => a + b, 0) / totals.sizeErrs.length : null;
+        const meanElongation = totals.elongations.length ? totals.elongations.reduce((a, b) => a + b, 0) / totals.elongations.length : null;
+        return { totalTP: totals.tp, totalFN: totals.fn, totalFP: totals.fp, precision, recall, f1, meanPosErr_px: meanPosErr, meanSizeErr_px: meanSizeErr, meanElongation, framesAnnotated: state.savedFrames.length };
+      })(),
+      note: "Precision = matched / (matched + detector false positives). Recall = matched / (matched + missed-by-detector). Position error is computed only on matched pairs and reflects centroid accuracy, not detection sensitivity. Size error compares each manual mark's region-grown (half-max/FWHM) radius against the automated detection's radius computed the same way at its own centroid -- not the detector's native detection-threshold radius, which uses a different, stricter convention meant for deciding whether something is a particle at all rather than measuring its extent. Elongation (majorR/minorR of each blob's equivalent ellipse) is included per detection since particles aren't always round -- fast-moving ones blur into streaks within a single frame's exposure; elongation near 1.0 is round, higher values are more streak-like. The pooled meanElongation excludes degenerate 1-2px blobs (reported as elongation 99, a sentinel, not a real streak measurement).",
+    };
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "tear_film_validation_report.json";
+    a.click();
+  });
+
+  /* ================= feed validation findings back into detection settings =================
+     A small grid search over sensitivity (thresh_k) x noise floor, re-run
+     against every frame the user has already saved a ground-truth comparison
+     for, scored by pooled F1 against those manual marks. This is what turns
+     "here's how good/bad detection is" into "here's a better setting to use"
+     instead of leaving that translation to the user's eyeballing. minR/maxR/
+     win are left at their current slider values -- those mostly gate particle
+     *size*, which manual marks don't really speak to, whereas thresh_k/floor
+     are the actual sensitivity knobs the manual-vs-automated comparison is
+     testing. */
+  let state_suggested = null;
+  async function suggestSettings() {
+    const rows = state.savedFrames;
+    if (!rows.length) return;
+    els.btnSuggestSettings.disabled = true;
+    const tolerance = parseFloat(els.matchTolerance.value) || 8;
+    const w = state.naturalW, h = state.naturalH;
+    const mask = buildRoiMask(w, h, state.roi);
+    const threshCandidates = [1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0];
+    const floorCandidates = [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+    const minR = state.detParams.minR, maxR = state.detParams.maxR, win = state.detParams.win;
+    const minArea = Math.PI * minR * minR, maxArea = Math.PI * maxR * maxR;
+
+    // pre-band-pass each saved frame once (independent of thresh_k/floor), and
+    // pre-compute its glare-excluded mask, so the grid search only re-runs
+    // the cheaper thresholding+components step per candidate.
+    const dogByFrame = new Map();
+    const maskByFrame = new Map();
+    for (const r of rows) {
+      if (dogByFrame.has(r.frameIdx)) continue;
+      const gimg = { width: w, height: h, data: state.capturedFrames[r.frameIdx].gray };
+      dogByFrame.set(r.frameIdx, PTLib.bandpass(gimg, 1.0, 6.0));
+      maskByFrame.set(r.frameIdx, excludeGlare(gimg, mask, w, h));
+    }
+
+    let best = null;
+    let combo = 0;
+    const totalCombos = threshCandidates.length * floorCandidates.length;
+    for (const thresh_k of threshCandidates) {
+      for (const floor of floorCandidates) {
+        let tp = 0, fp = 0, fn = 0;
+        for (const r of rows) {
+          const dog = dogByFrame.get(r.frameIdx);
+          const dets = PTLib.detectParticles(dog, maskByFrame.get(r.frameIdx), { thresh_k, floor, win, minArea, maxArea });
+          const { matches, unmatchedManual, unmatchedAuto } = matchPoints(r.manualPoints, dets, tolerance);
+          tp += matches.length; fn += unmatchedManual.length; fp += unmatchedAuto.length;
+        }
+        const precision = tp + fp > 0 ? tp / (tp + fp) : 0;
+        const recall = tp + fn > 0 ? tp / (tp + fn) : 0;
+        const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+        if (!best || f1 > best.f1) best = { thresh_k, floor, f1, precision, recall };
+        combo++;
+        if (combo % 8 === 0) {
+          els.tuneStatus.textContent = `Searching… ${combo}/${totalCombos} combinations tested`;
+          await new Promise((res) => setTimeout(res, 0));
+        }
+      }
+    }
+    state_suggested = { thresh_k: best.thresh_k, floor: best.floor, minR, maxR, win, glareBuffer: state.detParams.glareBuffer };
+    els.tuneStatus.textContent = `Tested ${totalCombos} combinations against ${rows.length} saved frame(s).`;
+    els.tuneResult.style.display = "block";
+    els.tuneF1.textContent = fmtNum(best.f1 * 100, 1) + "%";
+    els.tuneParams.textContent = `${fmtNum(best.thresh_k, 2)} / ${fmtNum(best.floor, 2)}`;
+    els.tunePR.textContent = `${fmtNum(best.precision * 100, 0)}% / ${fmtNum(best.recall * 100, 0)}%`;
+    // Warn if the winner sits on the edge of the searched range -- that means the true optimum
+    // may lie outside what was tested, not that this value is actually best.
+    const thMin = threshCandidates[0], thMax = threshCandidates[threshCandidates.length - 1];
+    const flMin = floorCandidates[0], flMax = floorCandidates[floorCandidates.length - 1];
+    const onEdge = best.thresh_k === thMin || best.thresh_k === thMax || best.floor === flMin || best.floor === flMax;
+    if (onEdge) {
+      const which = [];
+      if (best.thresh_k === thMin || best.thresh_k === thMax) which.push(`sensitivity (${best.thresh_k === thMax ? "top" : "bottom"} of range)`);
+      if (best.floor === flMin || best.floor === flMax) which.push(`floor (${best.floor === flMax ? "top" : "bottom"} of range)`);
+      els.tuneBoundaryWarn.textContent = `Best result hit the edge of the search range for ${which.join(" and ")}. The true optimum may lie beyond what was tested -- this value isn't confirmed as a real optimum yet.`;
+      els.tuneBoundaryWarn.style.display = "block";
+    } else {
+      els.tuneBoundaryWarn.style.display = "none";
+    }
+    els.btnSuggestSettings.disabled = false;
+  }
+  els.btnSuggestSettings.addEventListener("click", suggestSettings);
+  els.btnApplySuggested.addEventListener("click", () => {
+    if (!state_suggested) return;
+    state.detParams = { ...state_suggested };
+    els.sldSensitivity.value = state_suggested.thresh_k; els.sldFloor.value = state_suggested.floor;
+    els.sldMinR.value = state_suggested.minR; els.sldMaxR.value = state_suggested.maxR;
+    renderFrame();
+    setStatus("Applied suggested settings to this session.", "ok");
+  });
+  els.btnExportSuggested.addEventListener("click", () => {
+    if (!state_suggested) return;
+    const payload = { type: "tear-film-detection-settings", version: 1, detectionParams: state_suggested, savedAt: new Date().toISOString() };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "detection_settings.json";
+    a.click();
+  });
+
+  els.btnExportCalibration.addEventListener("click", () => {
+    if (!state.roi || !state.naturalW || !state.naturalH) return;
+    const roi = state.roi;
+    const normalizedRoi = {
+      rx: roi.x / state.naturalW, ry: roi.y / state.naturalH,
+      rw: roi.w / state.naturalW, rh: roi.h / state.naturalH,
+    };
+    const payload = {
+      type: "tear-film-calibration", version: 1,
+      roi: normalizedRoi,
+      detectionParams: state.detParams,
+      videoFileName: state.videoFileName || null,
+      savedAt: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "tear_film_calibration.json";
+    a.click();
+    setStatus("Calibration (ROI + detection settings) exported -- load it into the main tracker via either \"Load ROI\" or \"Load detection settings\" in step 2/3.", "ok");
+  });
+})();
+</script>
+</body></html>

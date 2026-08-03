@@ -1,0 +1,19 @@
+# Tear Film Analysis - Required Python Packages
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+opencv-python>=4.8.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Data analysis
+pandas>=2.0.0
+matplotlib>=3.7.0
+
+# Streamlit UI
+streamlit>=1.28.0
+streamlit-image-coordinates>=0.1.6
+
+# Optional: Advanced visualization
+seaborn>=0.12.0
+plotly>=5.17.0

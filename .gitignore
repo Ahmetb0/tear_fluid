@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project data (large / local)
+assests/
+assets/
+*.mkv
+*.mp4
+*.avi
+*.mov
+
+# Analysis outputs (regenerate locally)
+*.csv
+!example_*.csv
+
+# Logs & temp
+*.log
+*.tmp
+
+# Secrets
+.env
+.env.*
+credentials.json
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Generated plots
+test_power_law_*.png
+optimization_grid_search.csv
