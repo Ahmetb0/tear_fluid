@@ -653,6 +653,7 @@ class ParticleTracker:
         self.tracked_objects: Dict[int, Tuple[float, float]] = {}
         self.next_id = 0
         self.trajectories: Dict[int, List[Tuple[float, float]]] = {}
+        self.last_frame_idx: Optional[int] = None
     
     def normalize_coordinates(self, x: float, y: float, 
                             ref_point: Tuple[int, int], 
@@ -683,7 +684,8 @@ class ParticleTracker:
     def update(self, particles: List[Dict], 
                ref_point: Tuple[int, int],
                norm_distance: float,
-               fps: float) -> Tuple[Dict[int, Tuple[float, float]], Dict[int, float]]:
+               fps: float,
+               frame_idx: int) -> Tuple[Dict[int, Tuple[float, float]], Dict[int, float]]:
         """
         Update tracking with new particle detections.
         
@@ -692,6 +694,7 @@ class ParticleTracker:
             ref_point: Reference point for normalization
             norm_distance: Normalization distance
             fps: Frame rate for velocity calculation
+            frame_idx: Current video frame index (for dynamic delta_t)
             
         Returns:
             (tracked_objects, velocities) dictionaries
@@ -712,9 +715,15 @@ class ParticleTracker:
                 self.tracked_objects[self.next_id] = (x_norm, y_norm)
                 self.trajectories[self.next_id] = [(x_norm, y_norm)]
                 self.next_id += 1
+            self.last_frame_idx = frame_idx
             return self.tracked_objects, velocities
         
-        # Match particles to existing tracks
+        # Real elapsed time since last processed frame (handles skipped frames)
+        if self.last_frame_idx is not None:
+            delta_frames = max(1, frame_idx - self.last_frame_idx)
+        else:
+            delta_frames = 1
+        delta_t = delta_frames / fps
         updated_objects = {}
         max_dist = self.config.max_tracking_distance
         
@@ -735,8 +744,7 @@ class ParticleTracker:
                 # Matched existing track
                 updated_objects[best_match_id] = new_point
                 
-                # Calculate MMS velocity (units per 0.1 second)
-                delta_t = 1.0 / fps
+                # MMS velocity: normalized distance per 0.1 second
                 mms_velocity = (best_distance / delta_t) * 0.1
                 velocities[best_match_id] = mms_velocity
                 
@@ -753,12 +761,27 @@ class ParticleTracker:
                 self.next_id += 1
         
         self.tracked_objects = updated_objects
+        self.last_frame_idx = frame_idx
         return self.tracked_objects, velocities
     
     def reset(self):
         """Reset tracking state (called on blinks)."""
         self.tracked_objects = {}
         self.trajectories = {}
+        self.last_frame_idx = None
+
+
+# Detection parameters that grid search may optimize and Apply should sync
+OPTIMIZABLE_DETECTION_PARAMS = (
+    'thresh_k',
+    'floor_threshold',
+    'min_particle_area',
+    'max_particle_area',
+    'glare_buffer_radius',
+    'sigma_small',
+    'sigma_large',
+    'validation_match_tolerance',
+)
 
 
 class ValidationOptimizer:
@@ -988,6 +1011,9 @@ class ValidationOptimizer:
         optimized_config = TearFilmConfig(**self.config.__dict__)
         optimized_config.thresh_k = self.best_params['thresh_k']
         optimized_config.floor_threshold = self.best_params['floor_threshold']
+        for key in OPTIMIZABLE_DETECTION_PARAMS:
+            if key in self.best_params:
+                setattr(optimized_config, key, self.best_params[key])
         
         print(
             f"[Optimizer] Applied best settings: "
@@ -1137,7 +1163,8 @@ class TearFilmAnalyzer:
                         particles,
                         self.glare_excluder.superior_light,
                         self.glare_excluder.normalization_distance,
-                        self.config.fps
+                        self.config.fps,
+                        frame_idx
                     )
                     
                     time_sec = frame_idx / self.config.fps

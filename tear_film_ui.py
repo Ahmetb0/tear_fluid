@@ -16,8 +16,19 @@ import matplotlib.pyplot as plt
 from tear_film_advanced import (
     TearFilmConfig, TearFilmAnalyzer, 
     ParticleDetector, GlareExcluder, BlinkDetector, ValidationOptimizer,
-    compute_power_law_decay
+    compute_power_law_decay, OPTIMIZABLE_DETECTION_PARAMS
 )
+
+
+def apply_optimized_config_to_session(
+    optimized_cfg: TearFilmConfig,
+    match_tolerance: float,
+) -> None:
+    """Copy all optimizable detection params from optimizer result into session config."""
+    cfg = st.session_state.config
+    for attr in OPTIMIZABLE_DETECTION_PARAMS:
+        setattr(cfg, attr, getattr(optimized_cfg, attr))
+    cfg.validation_match_tolerance = match_tolerance
 
 # Try to import streamlit-image-coordinates (optional for better UX)
 try:
@@ -298,26 +309,26 @@ with tab1:
             st.subheader("Particle Detection Parameters")
             cfg = st.session_state.config
             
-            thresh_k = st.slider(
+            cfg.thresh_k = st.slider(
                 "Adaptive Threshold Multiplier (thresh_k)",
                 min_value=1.0, max_value=8.0,
                 value=float(cfg.thresh_k), step=0.1,
                 help="Higher = more selective (fewer particles)"
             )
             
-            min_area = st.slider(
+            cfg.min_particle_area = st.slider(
                 "Minimum Particle Area (pixels²)",
                 min_value=1, max_value=10,
                 value=int(cfg.min_particle_area), step=1
             )
             
-            max_area = st.slider(
+            cfg.max_particle_area = st.slider(
                 "Maximum Particle Area (pixels²)",
                 min_value=20, max_value=200,
                 value=int(cfg.max_particle_area), step=5
             )
             
-            glare_buffer = st.slider(
+            cfg.glare_buffer_radius = st.slider(
                 "Glare Buffer Radius (pixels)",
                 min_value=10, max_value=80,
                 value=int(cfg.glare_buffer_radius), step=5,
@@ -326,32 +337,23 @@ with tab1:
             
             st.subheader("Bandpass Filter")
             
-            sigma_small = st.slider(
+            cfg.sigma_small = st.slider(
                 "Small Sigma",
                 min_value=0.5, max_value=3.0,
                 value=float(cfg.sigma_small), step=0.1
             )
             
-            sigma_large = st.slider(
+            cfg.sigma_large = st.slider(
                 "Large Sigma",
                 min_value=3.0, max_value=15.0,
                 value=float(cfg.sigma_large), step=0.5
             )
             
-            floor_thresh = st.slider(
+            cfg.floor_threshold = st.slider(
                 "Floor Threshold",
                 min_value=0.0, max_value=5.0,
                 value=float(cfg.floor_threshold), step=0.1
             )
-            
-            # Keep session config in sync with sliders (BUG-S1/S2)
-            cfg.thresh_k = thresh_k
-            cfg.min_particle_area = min_area
-            cfg.max_particle_area = max_area
-            cfg.glare_buffer_radius = glare_buffer
-            cfg.sigma_small = sigma_small
-            cfg.sigma_large = sigma_large
-            cfg.floor_threshold = floor_thresh
             
             if st.button("🔄 Apply & Visualize", type="primary"):
                 # Config already synced above; run preview only
@@ -431,31 +433,30 @@ with tab2:
         
         with col1:
             st.subheader("Blink Detection Parameters")
+            cfg = st.session_state.config
             
-            z_threshold = st.slider(
+            cfg.blink_z_threshold = st.slider(
                 "Z-Score Threshold",
-                min_value=2.0, max_value=8.0, value=4.0, step=0.5,
+                min_value=2.0, max_value=8.0,
+                value=float(cfg.blink_z_threshold), step=0.5,
                 help="Lower = more sensitive"
             )
             
-            pad_frames = st.slider(
+            cfg.blink_pad_frames = st.slider(
                 "Padding Frames",
                 min_value=0, max_value=5,
-                value=int(st.session_state.config.blink_pad_frames), step=1
+                value=int(cfg.blink_pad_frames), step=1
             )
             
-            min_epoch = st.slider(
+            cfg.min_epoch_length = st.slider(
                 "Minimum Epoch Length",
-                min_value=3, max_value=20, value=5, step=1
+                min_value=3, max_value=20,
+                value=int(cfg.min_epoch_length), step=1
             )
             
             button_text = "🔄 Re-analyze with New Parameters" if st.session_state.epochs else "🔍 Analyze Blinks"
             
             if st.button(button_text, type="primary"):
-                st.session_state.config.blink_z_threshold = z_threshold
-                st.session_state.config.blink_pad_frames = pad_frames
-                st.session_state.config.min_epoch_length = min_epoch
-                
                 with st.spinner("Re-analyzing brightness signal and epochs..."):
                     # Re-run full epoch preprocessing
                     epochs, safe_frames, blink_ranges, num_frames, elapsed = preprocess_video_epochs(
@@ -1011,9 +1012,14 @@ with tab5:
                 floor_step = st.slider("Step Size", 0.1, 0.5, 0.25, 0.05, key="fl_step")
             
             st.markdown("---")
-            match_tolerance = st.slider("🎯 Matching Tolerance (pixels)", 
-                                       1.0, 20.0, 5.0, 0.5,
-                                       help="Maximum distance between detected and ground truth particles for a match")
+            cfg = st.session_state.config
+            match_tolerance = st.slider(
+                "🎯 Matching Tolerance (pixels)",
+                1.0, 20.0,
+                value=float(cfg.validation_match_tolerance), step=0.5,
+                help="Maximum distance between detected and ground truth particles for a match"
+            )
+            cfg.validation_match_tolerance = match_tolerance
             
             num_combinations = len(np.arange(thresh_k_min, thresh_k_max, thresh_k_step)) * \
                              len(np.arange(floor_min, floor_max, floor_step))
@@ -1114,12 +1120,11 @@ with tab5:
                         opt = st.session_state.get('last_optimizer')
                         if opt is not None and opt.best_params is not None:
                             optimized_cfg = opt.apply_best_settings()
-                            st.session_state.config.thresh_k = optimized_cfg.thresh_k
-                            st.session_state.config.floor_threshold = optimized_cfg.floor_threshold
                         else:
-                            st.session_state.config.thresh_k = best_result['thresh_k']
-                            st.session_state.config.floor_threshold = best_result['floor_threshold']
-                        st.session_state.config.validation_match_tolerance = match_tolerance
+                            optimized_cfg = TearFilmConfig(**st.session_state.config.__dict__)
+                            optimized_cfg.thresh_k = best_result['thresh_k']
+                            optimized_cfg.floor_threshold = best_result['floor_threshold']
+                        apply_optimized_config_to_session(optimized_cfg, match_tolerance)
                         st.success(
                             f"✅ Applied: thresh_k={st.session_state.config.thresh_k:.2f}, "
                             f"floor_threshold={st.session_state.config.floor_threshold:.2f}, "
