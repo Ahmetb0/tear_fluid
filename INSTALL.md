@@ -184,18 +184,19 @@ tear_fluid/
 │
 ├── tear_film_advanced.py      # Ana analiz sistemi
 ├── tear_film_ui.py            # Streamlit UI
-├── tear_film.py               # Eski sistem (referans)
 ├── veri_analizi.py            # Post-processing
 │
 ├── requirements.txt           # Paket gereksinimleri
+├── README.md                  # Proje özeti (English)
 ├── README_ADVANCED.md         # Kullanım kılavuzu
-├── COMPARISON.md              # Sistem karşılaştırması
 ├── INSTALL.md                 # Bu dosya
+├── POWER_LAW_ANALYSIS.md      # Power-law metodolojisi
+├── SAFE_FRAME_GUIDE.md        # Safe frame rehberi
 │
-├── assests/                   # Video dosyaları
+├── assests/                   # Video dosyaları (gitignore)
 │   └── *.mkv
 │
-└── *.csv                      # Analiz sonuçları
+└── *.csv                      # Analiz sonuçları (gitignore)
 ```
 
 ---
@@ -225,7 +226,7 @@ Hepsi çalışıyorsa: **✅ Kurulum başarılı!**
 ## 📚 Sonraki Adımlar
 
 1. **Parametreleri Öğren:** `README_ADVANCED.md` dosyasını okuyun
-2. **Karşılaştırma:** `COMPARISON.md` ile eski/yeni sistemleri karşılaştırın
+2. **Kurulum:** `INSTALL.md` ve `README.md` dosyalarına bakın
 3. **Titration:** Streamlit UI ile parametreleri optimize edin
 4. **Batch Processing:** Birden fazla video için script yazın
 
@@ -307,10 +308,10 @@ for video in glob.glob("videos/*.mkv"):
 ## 🆘 Yardım Kaynakları
 
 ### Documentation
+- `README.md` - Project overview (English)
 - `README_ADVANCED.md` - Detaylı kullanım kılavuzu
 - `POWER_LAW_ANALYSIS.md` - Power-law decay curve metodolojisi
 - `SAFE_FRAME_GUIDE.md` - Safe frame selection rehberi
-- `COMPARISON.md` - Eski vs yeni sistem
 - Kod içi docstring'ler
 
 ### Hata Ayıklama

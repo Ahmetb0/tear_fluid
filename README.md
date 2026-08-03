@@ -42,14 +42,13 @@ tear_fluid/
 ├── tear_film_ui.py         # Streamlit interactive UI
 ├── veri_analizi.py         # CLI power-law post-processing
 ├── requirements.txt
-├── example_usage.py
-├── tear_film.py            # Legacy reference implementation
-├── README.md               # This file
-├── README_ADVANCED.md      # Detailed user guide (Turkish)
+├── run_analysis.bat        # Windows: run analysis
+├── start_ui.bat            # Windows: launch Streamlit UI
+├── README.md               # Project overview (English)
+├── README_ADVANCED.md      # Detailed user guide
 ├── INSTALL.md              # Installation guide
-├── POWER_LAW_ANALYSIS.md   # Power-law methodology
-├── SAFE_FRAME_GUIDE.md     # Safe frame selection docs
-└── AUDIT_REPORT.md         # Technical audit notes
+├── POWER_LAW_ANALYSIS.md   # Power-law decay methodology
+└── SAFE_FRAME_GUIDE.md     # Safe frame selection docs
 ```
 
 ---
@@ -148,8 +147,6 @@ python veri_analizi.py tear_film_analysis_advanced.csv
 | [INSTALL.md](INSTALL.md) | Step-by-step setup |
 | [POWER_LAW_ANALYSIS.md](POWER_LAW_ANALYSIS.md) | Decay curve methodology |
 | [SAFE_FRAME_GUIDE.md](SAFE_FRAME_GUIDE.md) | Safe frame UI behavior |
-| [AUDIT_REPORT.md](AUDIT_REPORT.md) | Known issues & design notes |
-| [COMPARISON.md](COMPARISON.md) | Legacy vs. advanced system |
 
 ---
 
