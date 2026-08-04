@@ -24,17 +24,41 @@ build/
 Thumbs.db
 desktop.ini
 
-# Project data (large / local)
+# Project media — only test.png is tracked in the repo root
+**/*.png
+!test.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.webp
+**/*.bmp
+**/*.tif
+**/*.tiff
+
+# Raw videos & uploads
 assests/
 assets/
 *.mkv
 *.mp4
 *.avi
 *.mov
+.streamlit_uploads/
+
+# Training / annotation data (local)
+data/unet_raw_frames/
+data/masks/
+data/annotations.json
+
+# Model weights (train locally)
+*.pth
+*.pt
+*.onnx
 
 # Analysis outputs (regenerate locally)
 *.csv
 !example_*.csv
+output/
+particle_tracks.csv
 
 # Logs & temp
 *.log
@@ -48,6 +72,7 @@ credentials.json
 # Streamlit
 .streamlit/secrets.toml
 
-# Generated plots
+# Generated plots (except committed test.png)
+test_sonuclari.png
 test_power_law_*.png
 optimization_grid_search.csv

@@ -30,6 +30,11 @@ def apply_optimized_config_to_session(
         setattr(cfg, attr, getattr(optimized_cfg, attr))
     cfg.validation_match_tolerance = match_tolerance
 
+from unet_tracking_tab import render_unet_tracking_tab
+from ui_video import persist_uploaded_video
+from medical_report import compute_medical_report
+from medical_report_ui import render_medical_report_section
+
 # Try to import streamlit-image-coordinates (optional for better UX)
 try:
     from streamlit_image_coordinates import streamlit_image_coordinates
@@ -62,6 +67,10 @@ if 'blink_ranges' not in st.session_state:
     st.session_state.blink_ranges = []
 if 'num_frames' not in st.session_state:
     st.session_state.num_frames = 0
+if 'video_display_name' not in st.session_state:
+    st.session_state.video_display_name = ""
+if 'fdm_enabled' not in st.session_state:
+    st.session_state.fdm_enabled = False
 
 
 def load_sample_frame(video_path: str, frame_idx: int = 30):
@@ -118,7 +127,7 @@ def preprocess_video_epochs(video_path: str, config: TearFilmConfig):
     This runs once when video is loaded and caches results in session state.
     
     Returns:
-        tuple: (epochs, safe_frames, blink_ranges, num_frames)
+        tuple: (epochs, safe_frames, blink_ranges, num_frames, elapsed, frame_signals)
     """
     import time
     start = time.time()
@@ -138,6 +147,7 @@ def preprocess_video_epochs(video_path: str, config: TearFilmConfig):
     from tear_film_advanced import BlinkDetector, EpochSegmenter
     blink_detector = BlinkDetector(config)
     blink_ranges = blink_detector.detect_blinks(video_path)
+    frame_signals = blink_detector.frame_signals
     
     # Segment epochs
     epoch_segmenter = EpochSegmenter(config)
@@ -150,7 +160,7 @@ def preprocess_video_epochs(video_path: str, config: TearFilmConfig):
     
     elapsed = time.time() - start
     
-    return epochs, safe_frames, blink_ranges, num_frames, elapsed
+    return epochs, safe_frames, blink_ranges, num_frames, elapsed, frame_signals
 
 
 def visualize_detection(gray_frame, config, glare_excluder, particle_detector):
@@ -195,59 +205,88 @@ def visualize_detection(gray_frame, config, glare_excluder, particle_detector):
 st.sidebar.title("💧 Tear Film Analysis")
 st.sidebar.markdown("---")
 
-# Video selection
-st.sidebar.header("1️⃣ Video Selection")
-video_path = st.sidebar.text_input(
-    "Video Path",
-    value="C:/Users/Asus/Desktop/tear_fluid/assests/AYDIN_MEHMET TUNAHAN_Right_2026_07_26-14_01_16.mkv"
+# Video selection (shared by all tabs including U-Net)
+st.sidebar.header("1️⃣ Video Yükleme")
+st.sidebar.caption("Tüm sekmeler (Titration, Blink, Run Analysis, U-Net) aynı videoyu kullanır.")
+
+uploaded_video = st.sidebar.file_uploader(
+    "Video dosyası (mp4, avi, mov, mkv)",
+    type=["mp4", "avi", "mov", "mkv"],
+    key="sidebar_video_uploader",
+    help="Video yükleyin ve ardından **Load Video** ile blink analizi yapın.",
 )
 
-if st.sidebar.button("Load Video"):
-    if Path(video_path).exists():
-        with st.sidebar.spinner("Loading video and detecting epochs..."):
-            # Load sample frame
-            color_frame, gray_frame = load_sample_frame(video_path, frame_idx=30)
-            
-            if color_frame is not None:
-                st.session_state.sample_frame = (color_frame, gray_frame)
-                st.session_state.config.video_path = video_path
-                
-                # Preprocess: Detect blinks and segment epochs
-                epochs, safe_frames, blink_ranges, num_frames, elapsed = preprocess_video_epochs(
-                    video_path, 
-                    st.session_state.config
-                )
-                
-                # Cache results in session state
-                st.session_state.epochs = epochs
-                st.session_state.safe_frames = safe_frames
-                st.session_state.blink_ranges = blink_ranges
-                st.session_state.num_frames = num_frames
-                st.session_state.video_loaded = True
-                
-                # Show results
-                st.sidebar.success(f"✅ Video loaded! ({elapsed:.1f}s)")
-                st.sidebar.info(
-                    f"📊 Analysis:\n"
-                    f"- Total frames: {num_frames}\n"
-                    f"- Blink events: {len(blink_ranges)}\n"
-                    f"- Valid epochs: {len(epochs)}\n"
-                    f"- Safe frames: {len(safe_frames)} ({len(safe_frames)/num_frames*100:.1f}%)"
-                )
-            else:
-                st.sidebar.error("❌ Failed to load frame")
+if st.sidebar.button("Load Video", type="primary"):
+    if uploaded_video is None:
+        st.sidebar.error("❌ Önce bir video dosyası seçin.")
     else:
-        st.sidebar.error("❌ Video file not found")
+        saved_path = persist_uploaded_video(uploaded_video)
+        video_path = str(saved_path)
+
+        if not saved_path.exists():
+            st.sidebar.error("❌ Video kaydedilemedi.")
+        else:
+            with st.sidebar.spinner("Video yükleniyor, blink analizi yapılıyor..."):
+                color_frame, gray_frame = load_sample_frame(video_path, frame_idx=30)
+
+                if color_frame is not None:
+                    st.session_state.sample_frame = (color_frame, gray_frame)
+                    st.session_state.config.video_path = video_path
+                    st.session_state.video_display_name = uploaded_video.name
+
+                    epochs, safe_frames, blink_ranges, num_frames, elapsed, frame_signals = preprocess_video_epochs(
+                        video_path,
+                        st.session_state.config,
+                    )
+
+                    st.session_state.epochs = epochs
+                    st.session_state.safe_frames = safe_frames
+                    st.session_state.blink_ranges = blink_ranges
+                    st.session_state.num_frames = num_frames
+                    st.session_state.video_loaded = True
+                    st.session_state.blink_results = {
+                        "ranges": blink_ranges,
+                        "signals": frame_signals,
+                    }
+
+                    st.sidebar.success(f"✅ Video yüklendi! ({elapsed:.1f}s)")
+                    st.sidebar.info(
+                        f"📊 **{uploaded_video.name}**\n"
+                        f"- Toplam kare: {num_frames}\n"
+                        f"- Blink: {len(blink_ranges)}\n"
+                        f"- Epoch: {len(epochs)}\n"
+                        f"- Safe kare: {len(safe_frames)} "
+                        f"({len(safe_frames)/num_frames*100:.1f}%)"
+                    )
+                else:
+                    st.sidebar.error("❌ Kare okunamadı")
+
+if st.session_state.video_loaded:
+    st.sidebar.markdown(
+        f"**Aktif video:** `{st.session_state.video_display_name}`"
+    )
+
+st.sidebar.markdown("---")
+st.sidebar.header("2️⃣ Tıbbi Analiz (FDM)")
+st.session_state.fdm_enabled = st.sidebar.checkbox(
+    "FDM Analizi (Göz Kırptıktan Sonraki İlk 1 Saniye)",
+    value=st.session_state.fdm_enabled,
+    help=(
+        "Aktifken güç yasası ve biyobelirteçler yalnızca her blink sonrası "
+        "ilk 1 saniyelik (t=0 = ilk net kare) MMS verisiyle hesaplanır."
+    ),
+)
 
 st.sidebar.markdown("---")
 
 # ===== MAIN AREA: Tabs =====
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🎛️ Titration", 
     "🔍 Blink Detection", 
     "🚀 Run Analysis",
     "📊 Results",
-    "🔬 Optimization"
+    "🔬 Optimization",
+    "🧬 U-Net Gözyaşı Takibi",
 ])
 
 # ===== TAB 1: TITRATION =====
@@ -412,6 +451,7 @@ with tab2:
     if not st.session_state.video_loaded:
         st.warning("⚠️ Please load a video first from the sidebar!")
     else:
+        video_path = st.session_state.config.video_path
         # Show cached results if available
         if st.session_state.epochs is not None:
             st.success("✅ Blink detection already performed (cached from video load)")
@@ -427,7 +467,7 @@ with tab2:
                 safe_pct = len(st.session_state.safe_frames) / st.session_state.num_frames * 100
                 st.metric("Safe Frames", f"{safe_pct:.1f}%")
             
-            st.info("💡 These results are used for safe frame selection in Titration and Optimization tabs.")
+            st.info("💡 Safe frame listesi Titration, Optimization ve **U-Net Gözyaşı Takibi** sekmelerinde kullanılır.")
         
         col1, col2 = st.columns([1, 2])
         
@@ -458,23 +498,19 @@ with tab2:
             
             if st.button(button_text, type="primary"):
                 with st.spinner("Re-analyzing brightness signal and epochs..."):
-                    # Re-run full epoch preprocessing
-                    epochs, safe_frames, blink_ranges, num_frames, elapsed = preprocess_video_epochs(
+                    video_path = st.session_state.config.video_path
+                    epochs, safe_frames, blink_ranges, num_frames, elapsed, frame_signals = preprocess_video_epochs(
                         video_path,
-                        st.session_state.config
+                        st.session_state.config,
                     )
-                    
-                    # Update cache
+
                     st.session_state.epochs = epochs
                     st.session_state.safe_frames = safe_frames
                     st.session_state.blink_ranges = blink_ranges
                     st.session_state.num_frames = num_frames
-                    
-                    # Also keep signals for visualization
-                    blink_detector = BlinkDetector(st.session_state.config)
                     st.session_state.blink_results = {
-                        'ranges': blink_ranges,
-                        'signals': blink_detector.frame_signals
+                        "ranges": blink_ranges,
+                        "signals": frame_signals,
                     }
                     
                     st.success(f"✅ Re-analysis complete! ({elapsed:.1f}s)")
@@ -626,127 +662,211 @@ with tab3:
                     mime='text/csv'
                 )
 
+                if "time_since_blink_s" in df.columns and "mms_velocity" in df.columns:
+                    st.markdown("---")
+                    medical_report = compute_medical_report(
+                        df,
+                        fdm_enabled=st.session_state.fdm_enabled,
+                        fps=float(st.session_state.config.fps or 30.0),
+                    )
+                    render_medical_report_section(medical_report)
+
+def detect_results_csv_format(df: pd.DataFrame) -> str:
+    """Distinguish classic tear-film analysis CSV from U-Net tracking CSV."""
+    if "velocity_px_per_sec" in df.columns and "epoch" not in df.columns:
+        return "unet"
+    if "mms_velocity" in df.columns and "epoch" in df.columns:
+        return "classic"
+    return "unknown"
+
+
+def render_unet_csv_results(df: pd.DataFrame) -> None:
+    """Show U-Net tracking CSV in Results tab with a clear format notice."""
+    st.info(
+        "Bu dosya **U-Net takip CSV** formatında. Tam video analizi ve indirme için "
+        "**🧬 U-Net Gözyaşı Takibi** sekmesini kullanın.\n\n"
+        "📊 **Results** sekmesi klasik `Run Analysis` çıktısı içindir "
+        "(`epoch`, `mms_velocity`, `time_since_blink_s` sütunları)."
+    )
+    st.subheader("U-Net Takip Özeti")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Kayıt", len(df))
+    with col2:
+        st.metric("Parçacık ID", df["particle_id"].nunique() if "particle_id" in df else "—")
+    with col3:
+        if "video_id" in df:
+            st.metric("Video", df["video_id"].nunique())
+        else:
+            st.metric("Kare", df["frame_number"].nunique() if "frame_number" in df else "—")
+    with col4:
+        dur = df["time_sec"].max() if "time_sec" in df else 0
+        st.metric("Süre", f"{dur:.1f}s")
+
+    if "velocity_px_per_sec" in df.columns:
+        vel = df[df["velocity_px_per_sec"] > 0]
+        if not vel.empty:
+            st.subheader("Ortalama Hız (px/s)")
+            chart = vel.groupby("time_sec")["velocity_px_per_sec"].mean().reset_index()
+            st.line_chart(chart.set_index("time_sec"))
+
+    st.subheader("Ham Veri (ilk 100 satır)")
+    st.dataframe(df.head(100), width="stretch")
+
+
+def _render_classic_results(df: pd.DataFrame) -> None:
+    """Visualizations for tear_film_advanced pipeline CSV output."""
+    st.subheader("Summary Statistics")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Records", len(df))
+    with col2:
+        st.metric("Particles", df["particle_id"].nunique())
+    with col3:
+        st.metric("Epochs", df["epoch"].nunique())
+    with col4:
+        st.metric("Duration", f"{df['time_sec'].max():.1f}s")
+
+    st.subheader("Power-Law Decay Curve (Medical Literature Model)")
+
+    if "time_since_blink_s" in df.columns:
+        bin_size = st.slider(
+            "Binning Interval (seconds)",
+            min_value=0.05, max_value=0.5, value=0.15, step=0.05,
+            help="Group data into time intervals for smoothing",
+        )
+
+        if "include_in_power_law_fit" in df.columns:
+            n_excluded = (~df["include_in_power_law_fit"].astype(bool)).sum()
+            if n_excluded > 0:
+                st.info(
+                    f"ℹ️ Power-law fit excludes **{n_excluded}** rows from epochs "
+                    f"starting at frame 0 (non-post-blink). All data remain in CSV."
+                )
+
+        power_law_result = compute_power_law_decay(
+            df,
+            bin_size=bin_size,
+            fdm_enabled=st.session_state.fdm_enabled,
+        )
+
+        if power_law_result:
+            fig, ax = plt.subplots(figsize=(12, 5))
+            ax.scatter(
+                power_law_result["binned_time"],
+                power_law_result["binned_velocity"],
+                s=80, alpha=0.6, color="steelblue",
+                label="Binned Median Velocity", zorder=3,
+            )
+            ax.plot(
+                power_law_result["binned_time"],
+                power_law_result["fitted_curve"],
+                linewidth=3, color="crimson",
+                label=f"Fitted: {power_law_result['equation']}", zorder=4,
+            )
+            fdm_note = ""
+            if power_law_result.get("fdm_enabled"):
+                fdm_note = f"\nFDM: ≤{power_law_result.get('fdm_duration_s', 1.0):.1f}s"
+            ax.text(
+                0.02, 0.98,
+                f"R² = {power_law_result['r_squared']:.4f}\n"
+                f"α = {power_law_result['alpha']:.3f}\n"
+                f"β = {power_law_result['beta']:.3f}"
+                f"{fdm_note}",
+                transform=ax.transAxes, fontsize=11,
+                verticalalignment="top",
+                bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.8),
+            )
+            ax.set_xlabel("Time Since Blink (seconds)", fontsize=12)
+            ax.set_ylabel("Velocity (MMS)", fontsize=12)
+            title = "Tear Film Velocity Decay: MMS = α × t^(-β)"
+            if power_law_result.get("fdm_enabled"):
+                title += " [FDM]"
+            ax.set_title(title, fontsize=13, fontweight="bold")
+            ax.grid(True, alpha=0.3, linestyle="--")
+            ax.legend(loc="upper right", fontsize=10)
+            st.pyplot(fig)
+            plt.close(fig)
+
+            medical_report = compute_medical_report(
+                df,
+                fdm_enabled=st.session_state.fdm_enabled,
+                bin_size=bin_size,
+            )
+            render_medical_report_section(medical_report, show_fit_plot=False)
+
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("R² Score", f"{power_law_result['r_squared']:.4f}")
+            with col2:
+                st.metric("Bins Used", power_law_result["num_bins"])
+            with col3:
+                if power_law_result.get("eMMSi") is not None:
+                    st.metric("eMMSi (t=0.1s)", f"{power_law_result['eMMSi']:.4f}")
+            with col4:
+                if power_law_result.get("eMMSf") is not None:
+                    st.metric("eMMSf (t=2.0s)", f"{power_law_result['eMMSf']:.4f}")
+
+            st.info(
+                "📊 **Power-Law Model:** MMS(t) = α × t^(-β) — "
+                "α: ölçekleme, β: sönümleme. eMMSi/eMMSf tıbbi rapor bölümündedir."
+            )
+        else:
+            st.warning("⚠️ Unable to compute power-law curve. Check data quality.")
+    else:
+        st.warning("⚠️ time_since_blink_s column not found. Please re-run analysis with updated code.")
+
+    with st.expander("📉 Legacy View: Absolute Time (for comparison only)"):
+        st.caption("⚠️ Artifacts from concatenating different epochs")
+        if "mms_velocity" in df.columns:
+            velocity_time = df.groupby("time_sec")["mms_velocity"].mean().reset_index()
+            fig, ax = plt.subplots(figsize=(12, 3))
+            ax.plot(velocity_time["time_sec"], velocity_time["mms_velocity"],
+                    linewidth=1.5, color="gray", alpha=0.6)
+            ax.set_xlabel("Absolute Time (seconds)")
+            ax.set_ylabel("Mean MMS Velocity")
+            ax.grid(True, alpha=0.3)
+            st.pyplot(fig)
+
+    if "epoch" in df.columns and "mms_velocity" in df.columns:
+        st.subheader("Velocity by Epoch")
+        fig, ax = plt.subplots(figsize=(10, 5))
+        df.boxplot(column="mms_velocity", by="epoch", ax=ax)
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel("MMS Velocity")
+        plt.suptitle("")
+        st.pyplot(fig)
+
+    st.subheader("Raw Data (first 100 rows)")
+    st.dataframe(df.head(100), width="stretch")
+
+
 # ===== TAB 4: RESULTS =====
 with tab4:
     st.header("📊 Results Visualization")
-    
-    uploaded_file = st.file_uploader("Upload analysis results CSV", type=['csv'])
-    
+    st.caption(
+        "Klasik analiz CSV → `Run Analysis` sekmesi. "
+        "U-Net takip CSV → **🧬 U-Net Gözyaşı Takibi** sekmesi."
+    )
+
+    uploaded_file = st.file_uploader("Upload analysis results CSV", type=["csv"])
+
     if uploaded_file:
         df = pd.read_csv(uploaded_file)
-        
-        st.subheader("Summary Statistics")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Records", len(df))
-        with col2:
-            st.metric("Particles", df['particle_id'].nunique())
-        with col3:
-            st.metric("Epochs", df['epoch'].nunique())
-        with col4:
-            st.metric("Duration", f"{df['time_sec'].max():.1f}s")
-        
-        # Power-Law Decay Curve (Time Since Blink)
-        st.subheader("Power-Law Decay Curve (Medical Literature Model)")
-        
-        # Check if time_since_blink_s column exists
-        if 'time_since_blink_s' in df.columns:
-            bin_size = st.slider("Binning Interval (seconds)", 
-                                min_value=0.05, max_value=0.5, value=0.15, step=0.05,
-                                help="Group data into time intervals for smoothing")
-            
-            if 'include_in_power_law_fit' in df.columns:
-                n_excluded = (~df['include_in_power_law_fit'].astype(bool)).sum()
-                if n_excluded > 0:
-                    st.info(
-                        f"ℹ️ Power-law fit excludes **{n_excluded}** rows from epochs "
-                        f"starting at frame 0 (non-post-blink). All data remain in CSV."
-                    )
-            
-            power_law_result = compute_power_law_decay(df, bin_size=bin_size)
-            
-            if power_law_result:
-                # Create figure with power-law curve
-                fig, ax = plt.subplots(figsize=(12, 5))
-                
-                # Plot binned data as scatter points
-                ax.scatter(power_law_result['binned_time'], 
-                          power_law_result['binned_velocity'],
-                          s=80, alpha=0.6, color='steelblue', 
-                          label='Binned Median Velocity', zorder=3)
-                
-                # Plot fitted power-law curve
-                ax.plot(power_law_result['binned_time'], 
-                       power_law_result['fitted_curve'],
-                       linewidth=3, color='crimson', 
-                       label=f"Fitted: {power_law_result['equation']}", zorder=4)
-                
-                # Add R² to plot
-                ax.text(0.02, 0.98, 
-                       f"R² = {power_law_result['r_squared']:.4f}\n"
-                       f"α = {power_law_result['alpha']:.3f}\n"
-                       f"β = {power_law_result['beta']:.3f}",
-                       transform=ax.transAxes, fontsize=11,
-                       verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-                
-                ax.set_xlabel('Time Since Blink (seconds)', fontsize=12)
-                ax.set_ylabel('Velocity (mm/s)', fontsize=12)
-                ax.set_title('Tear Film Velocity Decay: v = α × t^(-β)', fontsize=13, fontweight='bold')
-                ax.grid(True, alpha=0.3, linestyle='--')
-                ax.legend(loc='upper right', fontsize=10)
-                
-                st.pyplot(fig)
-                
-                # Display statistics
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Alpha (α)", f"{power_law_result['alpha']:.3f}")
-                with col2:
-                    st.metric("Beta (β)", f"{power_law_result['beta']:.3f}")
-                with col3:
-                    st.metric("R² Score", f"{power_law_result['r_squared']:.4f}")
-                with col4:
-                    st.metric("Bins Used", power_law_result['num_bins'])
-                
-                st.info(
-                    "📊 **Power-Law Model Interpretation:**\n"
-                    "- **α (alpha)**: Initial velocity coefficient - higher values indicate faster initial tear film spread\n"
-                    "- **β (beta)**: Decay exponent - typical range 0.3-0.8 for healthy tear film\n"
-                    "- **R²**: Goodness of fit - values >0.8 indicate excellent model fit"
-                )
-            else:
-                st.warning("⚠️ Unable to compute power-law curve. Check data quality.")
+        csv_format = detect_results_csv_format(df)
+
+        if csv_format == "unet":
+            render_unet_csv_results(df)
+        elif csv_format == "classic":
+            _render_classic_results(df)
         else:
-            st.warning("⚠️ time_since_blink_s column not found. Please re-run analysis with updated code.")
-        
-        # Legacy view (old absolute time plot)
-        with st.expander("📉 Legacy View: Absolute Time (for comparison only)"):
-            st.caption("⚠️ This view shows artifacts from concatenating different epochs")
-            velocity_time = df.groupby('time_sec')['mms_velocity'].mean().reset_index()
-            
-            fig, ax = plt.subplots(figsize=(12, 3))
-            ax.plot(velocity_time['time_sec'], velocity_time['mms_velocity'], 
-                    linewidth=1.5, color='gray', alpha=0.6)
-            ax.set_xlabel('Absolute Time (seconds)')
-            ax.set_ylabel('Mean MMS Velocity')
-            ax.set_title('Mean Velocity Over Absolute Time (Not Recommended)')
-            ax.grid(True, alpha=0.3)
-            st.pyplot(fig)
-        
-        # Epoch comparison
-        st.subheader("Velocity by Epoch")
-        fig, ax = plt.subplots(figsize=(10, 5))
-        df.boxplot(column='mms_velocity', by='epoch', ax=ax)
-        ax.set_xlabel('Epoch')
-        ax.set_ylabel('MMS Velocity')
-        ax.set_title('Velocity Distribution by Epoch')
-        plt.suptitle('')
-        st.pyplot(fig)
-        
-        # Data table
-        st.subheader("Raw Data (first 100 rows)")
-        st.dataframe(df.head(100), use_container_width=True)
+            st.warning(
+                "Tanınmayan CSV formatı. Beklenen sütunlar:\n"
+                "- **Klasik:** `epoch`, `mms_velocity`, `time_sec`\n"
+                "- **U-Net:** `velocity_px_per_sec`, `centroid_x`, `particle_id`"
+            )
+            st.dataframe(df.head(50), width="stretch")
+
 
 # ===== TAB 5: OPTIMIZATION =====
 with tab5:
@@ -1179,6 +1299,10 @@ with tab5:
                         
                         plt.tight_layout()
                         st.pyplot(fig)
+
+# ===== TAB 6: U-NET TEAR TRACKING =====
+with tab6:
+    render_unet_tracking_tab()
 
 # ===== FOOTER =====
 st.sidebar.markdown("---")

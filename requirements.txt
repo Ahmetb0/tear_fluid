@@ -17,3 +17,7 @@ streamlit-image-coordinates>=0.1.6
 # Optional: Advanced visualization
 seaborn>=0.12.0
 plotly>=5.17.0
+
+# Deep learning (U-Net training)
+torch>=2.0.0
+torchvision>=0.15.0

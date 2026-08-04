@@ -1329,7 +1329,9 @@ class TearFilmAnalyzer:
 
 def compute_power_law_decay(df: 'pd.DataFrame', bin_size: float = 0.15, 
                            time_col: str = 'time_since_blink_s',
-                           velocity_col: str = 'mms_velocity') -> dict:
+                           velocity_col: str = 'mms_velocity',
+                           fdm_enabled: bool = False,
+                           fdm_duration_s: float = 1.0) -> dict:
     """
     Compute power-law decay curve fitting for tear film velocity.
     
@@ -1347,111 +1349,42 @@ def compute_power_law_decay(df: 'pd.DataFrame', bin_size: float = 0.15,
         bin_size: Time bin size in seconds (default: 0.15s)
         time_col: Name of time column (default: 'time_since_blink_s')
         velocity_col: Name of velocity column (default: 'mms_velocity')
+        fdm_enabled: If True, use only first fdm_duration_s after each blink (FDM)
+        fdm_duration_s: FDM window length in seconds (default: 1.0)
     
     Returns:
-        Dictionary containing:
-        - 'binned_time': Array of bin center times
-        - 'binned_velocity': Array of median velocities per bin
-        - 'alpha': Fitted alpha parameter
-        - 'beta': Fitted beta parameter
-        - 'fitted_curve': Fitted velocity values at binned times
-        - 'r_squared': R² goodness of fit
-        - 'equation': String representation of fitted equation
+        Dictionary containing fit parameters, eMMSi/eMMSf, and plot arrays; None on failure.
     """
-    import pandas as pd
-    from scipy.optimize import curve_fit
-    
-    # Exclude non-post-blink epochs (e.g. epoch starting at frame 0) from fit pool
-    fit_source = df.copy()
-    if 'include_in_power_law_fit' in fit_source.columns:
-        excluded = (~fit_source['include_in_power_law_fit'].astype(bool)).sum()
-        fit_source = fit_source[fit_source['include_in_power_law_fit'].astype(bool)]
-        if excluded > 0:
-            print(
-                f"[Power-Law] Excluded {excluded} rows from non-post-blink epochs "
-                f"(include_in_power_law_fit=0)"
-            )
-    
-    # Filter valid data (positive time and velocity)
-    valid_data = fit_source[(fit_source[time_col] > 0) & (fit_source[velocity_col] > 0)].copy()
-    
-    if len(valid_data) == 0:
-        print("⚠️ No valid data for power-law fitting")
+    from medical_report import compute_power_law_biomarkers
+
+    result = compute_power_law_biomarkers(
+        df,
+        time_col=time_col,
+        velocity_col=velocity_col,
+        bin_size=bin_size,
+        fdm_enabled=fdm_enabled,
+        fdm_duration_s=fdm_duration_s,
+    )
+    if not result.get("fit_success"):
+        if result.get("error"):
+            print(f"⚠️ Power-law fitting: {result['error']}")
         return None
-    
-    # Create time bins
-    max_time = valid_data[time_col].max()
-    bins = np.arange(0, max_time + bin_size, bin_size)
-    valid_data['time_bin'] = pd.cut(valid_data[time_col], bins=bins)
-    
-    # Calculate median velocity per bin
-    binned_stats = valid_data.groupby('time_bin', observed=True)[velocity_col].agg(['median', 'mean', 'count'])
-    binned_stats = binned_stats[binned_stats['count'] >= 3]  # Require at least 3 points per bin
-    
-    if len(binned_stats) < 4:
-        print("⚠️ Insufficient bins for curve fitting (need at least 4 bins with ≥3 points)")
-        return None
-    
-    # Extract bin centers and median velocities
-    bin_centers = np.array([interval.mid for interval in binned_stats.index])
-    median_velocities = binned_stats['median'].values
-    
-    # Remove any NaN or zero values
-    valid_mask = (~np.isnan(bin_centers)) & (~np.isnan(median_velocities)) & (bin_centers > 0) & (median_velocities > 0)
-    bin_centers = bin_centers[valid_mask]
-    median_velocities = median_velocities[valid_mask]
-    
-    if len(bin_centers) < 4:
-        print("⚠️ Insufficient valid bins after filtering")
-        return None
-    
-    # Define power-law function: v = alpha * t^(-beta)
-    def power_law(t, alpha, beta):
-        return alpha * np.power(t, -beta)
-    
-    try:
-        # Curve fitting with reasonable initial guesses
-        # Initial guess: alpha ~ first velocity, beta ~ 0.5 (typical for tear film)
-        initial_guess = [median_velocities[0], 0.5]
-        
-        # Fit the curve
-        params, covariance = curve_fit(
-            power_law, 
-            bin_centers, 
-            median_velocities,
-            p0=initial_guess,
-            bounds=([0.01, 0.01], [100, 3.0]),  # Reasonable physical bounds
-            maxfev=5000
-        )
-        
-        alpha, beta = params
-        
-        # Calculate fitted curve
-        fitted_velocities = power_law(bin_centers, alpha, beta)
-        
-        # Calculate R² (coefficient of determination)
-        ss_res = np.sum((median_velocities - fitted_velocities) ** 2)
-        ss_tot = np.sum((median_velocities - np.mean(median_velocities)) ** 2)
-        r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-        
-        # Create equation string
-        equation = f"v = {alpha:.3f} × t^(-{beta:.3f})"
-        
-        return {
-            'binned_time': bin_centers,
-            'binned_velocity': median_velocities,
-            'alpha': alpha,
-            'beta': beta,
-            'fitted_curve': fitted_velocities,
-            'r_squared': r_squared,
-            'equation': equation,
-            'bin_size': bin_size,
-            'num_bins': len(bin_centers)
-        }
-        
-    except Exception as e:
-        print(f"❌ Power-law fitting failed: {e}")
-        return None
+
+    return {
+        'binned_time': result['binned_time'],
+        'binned_velocity': result['binned_velocity'],
+        'alpha': result['alpha'],
+        'beta': result['beta'],
+        'eMMSi': result['eMMSi'],
+        'eMMSf': result['eMMSf'],
+        'fitted_curve': result['fitted_curve'],
+        'r_squared': result['r_squared'],
+        'equation': result['equation'],
+        'bin_size': bin_size,
+        'num_bins': result['num_bins'],
+        'fdm_enabled': fdm_enabled,
+        'fdm_duration_s': fdm_duration_s if fdm_enabled else None,
+    }
 
 
 def main():
