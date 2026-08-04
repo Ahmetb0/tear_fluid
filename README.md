@@ -1,6 +1,6 @@
 # Advanced Tear Film Analysis
 
-Python computer-vision pipeline for **tear-film particle tracking**, **blink-aware epoch segmentation**, **U-Net deep-learning segmentation**, and **clinical dynamics reporting**. Inspired by the PTLib reference and literature on corneal reflective particle spread (*Tracking the Reflective Light Particles Spreading on the Cornea*).
+Python computer-vision pipeline for **tear-film particle tracking**, **blink-aware epoch segmentation**, **U-Net deep-learning segmentation**, and **clinical dynamics reporting**. Inspired by the PTLib reference and literature on corneal reflective particle spread (_Tracking the Reflective Light Particles Spreading on the Cornea_).
 
 ![U-Net segmentation example](test.png)
 
@@ -12,33 +12,33 @@ Tear-film dynamics are studied by tracking bright particles in high-speed eye vi
 
 This system provides **two complementary pipelines**:
 
-| Pipeline | Method | Best for |
-| -------- | ------ | -------- |
-| **Classic** | Adaptive bandpass + glare mask + greedy tracking | Parameter tuning, FWHM metrics, validation grid search |
-| **U-Net** | Trained segmentation (`unet_tear_film.pth`) + centroid tracking | Robust particle masks on challenging frames |
+| Pipeline    | Method                                                          | Best for                                               |
+| ----------- | --------------------------------------------------------------- | ------------------------------------------------------ |
+| **Classic** | Adaptive bandpass + glare mask + greedy tracking                | Parameter tuning, FWHM metrics, validation grid search |
+| **U-Net**   | Trained segmentation (`unet_tear_film.pth`) + centroid tracking | Robust particle masks on challenging frames            |
 
 Both pipelines share:
 
-1. **Blink detection** (robust Z-score) and **open-eye epoch** segmentation  
-2. **Safe-frame filtering** (exclude blink intervals)  
-3. **MMS velocity** (momentary moving speed) over post-blink time  
-4. **Medical report**: power-law fit \( \mathrm{MMS}(t) = \alpha \cdot t^{-\beta} \) with biomarkers **eMMSi** / **eMMSf**  
-5. Optional **FDM** (Fixed-Duration Model): first **1 s** after each blink only  
+1. **Blink detection** (robust Z-score) and **open-eye epoch** segmentation
+2. **Safe-frame filtering** (exclude blink intervals)
+3. **MMS velocity** (momentary moving speed) over post-blink time
+4. **Medical report**: power-law fit \( \mathrm{MMS}(t) = \alpha \cdot t^{-\beta} \) with biomarkers **eMMSi** / **eMMSf**
+5. Optional **FDM** (Fixed-Duration Model): first **1 s** after each blink only
 
 ---
 
 ## Key Features
 
-| Feature | Description |
-| ------- | ----------- |
-| **Blink & epochs** | Median/MAD Z-score; padded blink exclusion |
-| **Glare exclusion** | Circular buffers around fixation lights |
-| **Classic detection** | DoG bandpass + local `thresh_k` / `floor_threshold` |
-| **U-Net segmentation** | Label Studio → train → infer → track (`train_unet.py`, `track_particles.py`) |
-| **Unified Streamlit UI** | One video upload for all tabs (classic + U-Net) |
-| **Power-law & biomarkers** | α, β, eMMSi (t=0.1 s), eMMSf (t=2.0 s), R² |
-| **FDM analysis** | Sidebar toggle: post-blink first 1 s window |
-| **Validation optimizer** | Grid search vs. manual ground truth (F1) |
+| Feature                    | Description                                                                  |
+| -------------------------- | ---------------------------------------------------------------------------- |
+| **Blink & epochs**         | Median/MAD Z-score; padded blink exclusion                                   |
+| **Glare exclusion**        | Circular buffers around fixation lights                                      |
+| **Classic detection**      | DoG bandpass + local `thresh_k` / `floor_threshold`                          |
+| **U-Net segmentation**     | Label Studio → train → infer → track (`train_unet.py`, `track_particles.py`) |
+| **Unified Streamlit UI**   | One video upload for all tabs (classic + U-Net)                              |
+| **Power-law & biomarkers** | α, β, eMMSi (t=0.1 s), eMMSf (t=2.0 s), R²                                   |
+| **FDM analysis**           | Sidebar toggle: post-blink first 1 s window                                  |
+| **Validation optimizer**   | Grid search vs. manual ground truth (F1)                                     |
 
 ---
 
@@ -153,16 +153,16 @@ Literature model:
 \mathrm{MMS}(t) = \alpha \cdot t^{-\beta}
 \]
 
-| Biomarker | Formula | Meaning |
-| --------- | ------- | ------- |
-| **α** | fit parameter | Scale factor |
-| **β** | fit parameter | Decay exponent |
+| Biomarker | Formula                         | Meaning                          |
+| --------- | ------------------------------- | -------------------------------- |
+| **α**     | fit parameter                   | Scale factor                     |
+| **β**     | fit parameter                   | Decay exponent                   |
 | **eMMSi** | \( \alpha \cdot 0.1^{-\beta} \) | Estimated speed at **t = 0.1 s** |
 | **eMMSf** | \( \alpha \cdot 2.0^{-\beta} \) | Estimated speed at **t = 2.0 s** |
 
-- **FDM off**: pooled post-blink epochs (excluding epoch starting at frame 0).  
-- **FDM on**: only samples with `time_since_blink_s ≤ 1.0` (t=0 = first clear frame after blink).  
-- **U-Net speeds**: px/s by default; enter **mm/pixel** in the UI for mm/s.  
+- **FDM off**: pooled post-blink epochs (excluding epoch starting at frame 0).
+- **FDM on**: only samples with `time_since_blink_s ≤ 1.0` (t=0 = first clear frame after blink).
+- **U-Net speeds**: px/s by default; enter **mm/pixel** in the UI for mm/s.
 - Implementation: `medical_report.py` + `compute_power_law_decay()` in `tear_film_advanced.py`.
 
 ---
@@ -171,22 +171,22 @@ Literature model:
 
 ### Classic (`Run Analysis`)
 
-| Column | Description |
-| ------ | ----------- |
-| `time_since_blink_s` | Time since epoch start (post-blink) |
+| Column                     | Description                                        |
+| -------------------------- | -------------------------------------------------- |
+| `time_since_blink_s`       | Time since epoch start (post-blink)                |
 | `include_in_power_law_fit` | Valid for decay fit (0 if epoch starts at frame 0) |
-| `epoch`, `particle_id` | Interval and track ID |
-| `mms_velocity` | Momentary moving speed (MMS) |
-| `x_norm`, `y_norm` | Normalized coordinates |
+| `epoch`, `particle_id`     | Interval and track ID                              |
+| `mms_velocity`             | Momentary moving speed (MMS)                       |
+| `x_norm`, `y_norm`         | Normalized coordinates                             |
 
 ### U-Net (`track_particles.py` / UI tab)
 
-| Column | Description |
-| ------ | ----------- |
-| `frame_number`, `time_sec` | Source frame and time |
-| `time_since_blink_s` | Added when epochs available (UI) |
-| `velocity_px_per_sec` | Speed in px/s |
-| `velocity_mm_per_sec` | Speed in mm/s (if calibrated) |
+| Column                     | Description                      |
+| -------------------------- | -------------------------------- |
+| `frame_number`, `time_sec` | Source frame and time            |
+| `time_since_blink_s`       | Added when epochs available (UI) |
+| `velocity_px_per_sec`      | Speed in px/s                    |
+| `velocity_mm_per_sec`      | Speed in mm/s (if calibrated)    |
 
 ---
 
@@ -202,13 +202,13 @@ Literature model:
 
 ## Documentation
 
-| Document | Purpose |
-| -------- | ------- |
-| [UI_GUIDE.md](UI_GUIDE.md) | Streamlit usage (Turkish) |
-| [README_ADVANCED.md](README_ADVANCED.md) | Classic parameters & API |
-| [INSTALL.md](INSTALL.md) | Setup & Label Studio |
-| [POWER_LAW_ANALYSIS.md](POWER_LAW_ANALYSIS.md) | Decay methodology |
-| [SAFE_FRAME_GUIDE.md](SAFE_FRAME_GUIDE.md) | Safe-frame selection |
+| Document                                       | Purpose                   |
+| ---------------------------------------------- | ------------------------- |
+| [UI_GUIDE.md](UI_GUIDE.md)                     | Streamlit usage (Turkish) |
+| [README_ADVANCED.md](README_ADVANCED.md)       | Classic parameters & API  |
+| [INSTALL.md](INSTALL.md)                       | Setup & Label Studio      |
+| [POWER_LAW_ANALYSIS.md](POWER_LAW_ANALYSIS.md) | Decay methodology         |
+| [SAFE_FRAME_GUIDE.md](SAFE_FRAME_GUIDE.md)     | Safe-frame selection      |
 
 ---
 
@@ -238,5 +238,4 @@ Research and clinical tooling. Validate on your acquisition setup before publica
 
 Algorithm design influenced by **PTLib** (JavaScript). Medical decay model aligned with corneal tear-film particle tracking literature. Stack: OpenCV, NumPy, SciPy, PyTorch, Streamlit.
 
-**Version:** 3.0  
-**Author:** Tear Film Research Lab
+**Version:** 3.0
